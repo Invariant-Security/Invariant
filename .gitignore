@@ -7,6 +7,7 @@
 *.dll
 *.so
 *.dylib
+/invariant
 
 # Test binary, built with `go test -c`
 *.test
@@ -27,6 +28,14 @@ go.work.sum
 # env file
 .env
 
+# Raw artifacts downloaded from sources (see INVARIANT_PRD.md, section 19) —
+# keep the directory tracked, not its contents.
+data/raw/*
+!data/raw/.gitkeep
+
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Internal onboarding notes — not meant for the public repo.
+to-do.md
