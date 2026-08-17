@@ -1,0 +1,4 @@
+-- Initial schema placeholder.
+-- The real schema (sources, documents, document_versions, extracted_items,
+-- controls, references, scores — see INVARIANT_PRD.md, section 21) will be
+-- added once the CIS extractor informs the final table design.

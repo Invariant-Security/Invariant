@@ -1,0 +1,1 @@
+# Study Note: Change Detection
