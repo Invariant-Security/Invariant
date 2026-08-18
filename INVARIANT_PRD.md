@@ -3,7 +3,7 @@
 > **Status:** Pre-implementation / living document  
 > **Project:** Invariant  
 > **Core philosophy:** Human First  
-> **Initial implementation:** Go, with Python as an explicit fallback if Go becomes a disproportionate bottleneck  
+> **Primary implementation:** Python, exposing a REST API (FastAPI) consumed by a React web frontend  
 > **Initial database:** PostgreSQL  
 > **First knowledge source:** CIS AWS Foundations Benchmark
 
@@ -175,7 +175,7 @@ Suggested structure:
 ```text
 docs/study-notes/
 
-go/
+python/
 ├── http-client.md
 ├── concurrency.md
 ├── interfaces.md
@@ -457,7 +457,7 @@ Rationale: Linux and Docker are broadly applicable; AWS adds cloud/security dept
 
 ## V0 — Knowledge Ingestion Foundation
 
-Objective: prove the core pipeline and validate Go.
+Objective: prove the core pipeline in Python.
 
 ```text
 Authoritative Source
@@ -476,8 +476,6 @@ PostgreSQL
         ↓
 Version Tracking
 ```
-
-If Go proves useful and productive, continue. If Go becomes a disproportionate learning/delivery bottleneck, Python is an accepted fallback.
 
 ## V0.1 — CIS
 
@@ -763,9 +761,9 @@ The project author normally uses ORMs, but this project is also a learning oppor
 Provisional:
 
 ```text
-Go
+Python
  │
- └── SQL + sqlc
+ └── SQL + psycopg (no ORM)
        │
        ▼
   PostgreSQL
@@ -776,7 +774,7 @@ Reasons:
 - the project is data-oriented;
 - version/history queries matter;
 - explicit SQL improves understanding;
-- typed generated Go access keeps the application layer manageable.
+- hand-written queries, mapped to dataclasses/Pydantic models, keep the application layer manageable without hiding the SQL behind an ORM.
 
 This remains provisional until V0 validates it.
 
@@ -1199,7 +1197,13 @@ Single Point of Failure
 
 ---
 
-# 31. CLI Direction
+# 31. CLI, API & Frontend Direction
+
+## CLI (internal / operator tooling)
+
+The CLI remains the operator-facing tool for running the ingestion pipeline
+(fetch, extract, normalize, diff, notify). It is not the primary way end
+users consume the knowledge base — that is the REST API described below.
 
 Candidate commands:
 
@@ -1218,7 +1222,7 @@ invariant control list
 First milestone:
 
 ```text
-go run ./cmd/invariant fetch cis
+python -m invariant.cli.main fetch cis
 ```
 
 Expected:
@@ -1233,6 +1237,29 @@ SHA-256 calculated
 Metadata persisted
 ```
 
+## Delivery Model: REST API + React
+
+Invariant's logic (collector, extractor, normalizer, versioning, diff,
+notification, storage) lives entirely in Python. That logic is exposed to
+consumers through a REST API, not through the CLI:
+
+```text
+Python core (domain, pipeline, storage)
+        ↓
+   REST API (FastAPI)
+        ↓
+  React SPA (web only)
+```
+
+- The API is the single place that serves knowledge-base data (sources,
+  documents, document versions, controls, diffs) to clients.
+- The frontend is a React single-page application, focused exclusively on
+  the web (no mobile/native target). It consumes the REST API and holds no
+  business logic of its own — that stays in the Python core.
+- The CLI and the API both call into the same Python core packages
+  (`invariant.collector`, `invariant.extractor`, ...) instead of duplicating
+  logic; the CLI drives the pipeline, the API reads/exposes its results.
+
 ---
 
 # 32. Initial Repository Structure
@@ -1240,20 +1267,26 @@ Metadata persisted
 ```text
 invariant/
 │
-├── cmd/
+├── src/
 │   └── invariant/
+│       ├── domain/
+│       ├── source/
+│       ├── collector/
+│       ├── extractor/
+│       ├── normalizer/
+│       ├── versioning/
+│       ├── diff/
+│       ├── notification/
+│       ├── storage/
+│       │   └── postgres/
+│       ├── api/          (REST API — FastAPI)
+│       └── cli/          (operator CLI — Typer)
 │
-├── internal/
-│   ├── source/
-│   ├── collector/
-│   ├── extractor/
-│   ├── normalizer/
-│   ├── versioning/
-│   ├── diff/
-│   ├── notification/
-│   └── storage/
+├── frontend/              (React SPA, web only — to be created)
 │
-├── migrations/
+├── sql/
+│   ├── schema/
+│   └── queries/
 │
 ├── docs/
 │   ├── architecture/
@@ -1266,7 +1299,7 @@ invariant/
 │
 ├── tests/
 │
-├── go.mod
+├── pyproject.toml
 ├── README.md
 ├── CONTRIBUTING.md
 ├── CODE_OF_CONDUCT.md
@@ -1285,28 +1318,37 @@ Provisional:
 
 ```text
 Language:
-Go
+Python
+
+API framework:
+FastAPI
+
+ASGI server:
+Uvicorn
+
+Frontend:
+React (web only)
 
 CLI:
-Cobra or lightweight equivalent
+Typer
 
-HTTP:
-net/http
+HTTP client:
+httpx
 
 Database:
 PostgreSQL
 
 DB access:
-SQL + sqlc
+SQL + psycopg (no ORM)
 
 Migrations:
-Go migration tool
+Alembic
 
 Logging:
-log/slog
+Python `logging` (stdlib)
 
 Tests:
-Go testing
+pytest
 
 CI:
 GitHub Actions
@@ -1322,33 +1364,32 @@ Filesystem first
 S3-compatible later
 ```
 
-Go references:
+Python references:
 
-- https://go.dev/doc/
-- https://pkg.go.dev/
-- https://pkg.go.dev/std
+- https://docs.python.org/3/
+- https://fastapi.tiangolo.com/
+- https://react.dev/
 
 ---
 
-# 34. Go as an Experiment
+# 34. Language Decision: Python
 
-V0 deliberately validates Go through real work:
+Invariant's initial implementation plan (see the earlier drafts of this
+PRD) treated Go as an experiment, with Python as an explicit fallback if
+Go became a disproportionate bottleneck. That fallback has been invoked:
+the project now builds its logic entirely in Python, exposed through a
+REST API (FastAPI) consumed by a React web frontend (see section 31).
 
-- HTTP;
-- file handling;
-- hashing;
-- parsing;
-- database interaction;
-- migrations;
-- CLI;
-- concurrency;
-- testing;
-- structured logging;
-- error handling.
+Reasons for the switch:
 
-If Go is educational and productive: **continue**.
-
-If Go creates a major bottleneck without enough benefit: **switch to Python**.
+- all business logic (pipeline, storage, versioning, diff, notification)
+  should live in one language, reducing context-switching;
+- a REST API + SPA delivery model fits Python's web ecosystem (FastAPI,
+  Pydantic) more directly than it fit the Go skeleton;
+- Python remains educational for this project across HTTP, file handling,
+  hashing, parsing, database interaction, migrations, CLI design,
+  concurrency, testing, structured logging and error handling — the same
+  learning goals V0 originally set for Go.
 
 Do not let the language choice destroy momentum.
 
@@ -1627,10 +1668,11 @@ Core value:
 | Philosophy | **Human First** |
 | AI | Accelerator, not authority |
 | Study Notes | First-class |
-| Initial language | **Go experiment** |
-| Fallback | Python |
+| Primary language | **Python** |
+| API delivery | REST API (FastAPI) |
+| Frontend | React (web only) |
 | Database | **PostgreSQL** |
-| DB access | SQL + sqlc, provisional |
+| DB access | SQL + psycopg, no ORM, provisional |
 | Raw documents | Files/object storage |
 | First source | **CIS** |
 | First benchmark | **CIS AWS Foundations** |
@@ -1655,7 +1697,7 @@ Step 1
 Create repository
 
 Step 2
-Create Go module
+Create Python project (pyproject.toml)
 
 Step 3
 Create CLI skeleton
@@ -1697,7 +1739,7 @@ Add Telegram notification
 The first useful commit can be extremely small:
 
 ```text
-go run ./cmd/invariant fetch cis
+python -m invariant.cli.main fetch cis
 ```
 
 Expected result:
@@ -1852,11 +1894,16 @@ This is the foundation of trust.
 - https://www.postgresql.org/docs/current/datatype-json.html
 - https://www.postgresql.org/docs/current/textsearch-controls.html
 
-## Go
+## Python
 
-- https://go.dev/doc/
-- https://pkg.go.dev/
-- https://pkg.go.dev/std
+- https://docs.python.org/3/
+- https://fastapi.tiangolo.com/
+- https://typer.tiangolo.com/
+- https://www.psycopg.org/psycopg3/docs/
+
+## React
+
+- https://react.dev/
 
 ## GitHub
 

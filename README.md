@@ -1,9 +1,9 @@
 # invariant
-Plataforma de ingestão, versionamento e rastreabilidade de diretrizes de segurança. Um laboratório de engenharia focado no pipeline de dados, unindo rigor técnico, aprendizado contínuo e a filosofia "Human First". Construído com Go, PostgreSQL e foco em evidências.
+Plataforma de ingestão, versionamento e rastreabilidade de diretrizes de segurança. Um laboratório de engenharia focado no pipeline de dados, unindo rigor técnico, aprendizado contínuo e a filosofia "Human First". Construído com Python, PostgreSQL e foco em evidências, entregando os dados via API REST para um frontend em React.
 
 # Invariant 🛡️
 
-![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)
+![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-V0%20(WIP)-orange)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
@@ -29,10 +29,12 @@ O **Invariant** não é apenas um scanner de segurança; é um pipeline de aquis
 ## 🛠️ Stack Tecnológico e Arquitetura
 
 O projeto utiliza ferramentas robustas com foco em performance e aprendizado profundo de engenharia:
-- **Linguagem:** Go (Golang)
+- **Linguagem:** Python
 - **Banco de Dados:** PostgreSQL
-- **SQL Boilerplate:** sqlc (Fugindo de ORMs para forçar o domínio de SQL real)
-- **CLI Framework:** Cobra (Para estruturação de comandos como `fetch`, `diff`, etc.)
+- **Acesso a Dados:** SQL puro via psycopg (fugindo de ORMs para forçar o domínio de SQL real)
+- **CLI Framework:** Typer (para comandos internos de pipeline como `fetch`, `diff`, etc.)
+- **API:** REST API com FastAPI, responsável por entregar os dados ao frontend
+- **Frontend:** React (SPA focado exclusivamente em web)
 
 ---
 
@@ -51,8 +53,9 @@ O desenvolvimento é incremental, garantindo a maturidade da camada de dados ant
 ## ⚙️ Pré-requisitos
 
 Para rodar o Invariant localmente, você precisará de:
-- [Go 1.21+](https://go.dev/doc/install)
+- [Python 3.11+](https://www.python.org/downloads/)
 - [PostgreSQL](https://www.postgresql.org/download/) (Rodando localmente ou via Docker)
+- [Node.js](https://nodejs.org/) (para o frontend em React, quando ele existir)
 - *Recomendado: Make e Docker para facilitar o setup da infra.*
 
 ---
@@ -67,7 +70,7 @@ Para rodar o Invariant localmente, você precisará de:
 
 2. **Baixe as dependências:**
    ```bash
-   go mod tidy
+   pip install -e ".[dev]"
    ```
 
 3. **Configure o banco de dados:**
@@ -75,7 +78,7 @@ Para rodar o Invariant localmente, você precisará de:
 
 4. **Execute o projeto:**
    ```bash
-   go run ./cmd/invariant --help
+   python -m invariant.cli.main --help
    ```
 
 ---
@@ -86,7 +89,7 @@ Para rodar o Invariant localmente, você precisará de:
 
 Para realizar a ingestão inicial do CIS AWS Foundations:
 ```bash
-go run ./cmd/invariant fetch cis
+python -m invariant.cli.main fetch cis
 ```
 *Este comando baixa o documento, salva o artefato bruto, calcula o hash SHA-256 e extrai os controles para o banco de dados.*
 
@@ -96,9 +99,9 @@ go run ./cmd/invariant fetch cis
 
 ```text
 invariant/
-├── cmd/                # Entrypoints da aplicação (Comandos Cobra CLI)
-├── internal/           # Lógica de negócio privada (parsers, db, ingestion)
-├── sql/                # Queries SQL brutas e schemas (usados pelo sqlc)
+├── src/invariant/      # Lógica de negócio, API REST (FastAPI) e CLI (Typer)
+├── sql/                # Queries SQL brutas e schemas
+├── frontend/           # SPA em React (a ser criado)
 └── docs/
     └── study-notes/    # 🧪 Laboratório de estudos e notas de arquitetura. O código é produto do aprendizado documentado aqui.
 ```

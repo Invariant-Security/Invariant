@@ -1,20 +1,20 @@
 # Makefile — Invariant
 # Skeleton targets only; implementations land as the corresponding pieces
-# (CLI, sqlc, migrations) are built.
+# (API, CLI, storage, migrations) are built.
 
-.PHONY: build run test sqlc-generate migrate-up
+.PHONY: install run-api run-cli test migrate-up
 
-build: ## Build the invariant binary.
-	go build ./...
+install: ## Install the project and its dependencies (editable, with dev extras).
+	pip install -e ".[dev]"
 
-run: ## Run the CLI (e.g. make run ARGS="fetch cis").
-	go run ./cmd/invariant $(ARGS)
+run-api: ## Run the REST API with auto-reload.
+	uvicorn invariant.api.main:app --reload
+
+run-cli: ## Run the CLI (e.g. make run-cli ARGS="fetch cis").
+	python -m invariant.cli.main $(ARGS)
 
 test: ## Run the test suite.
-	go test ./...
-
-sqlc-generate: ## Regenerate Go code from sql/queries and sql/schema.
-	sqlc generate
+	pytest
 
 migrate-up: ## Apply pending PostgreSQL migrations.
-	@echo "TODO: wire the chosen Go migration tool here"
+	@echo "TODO: wire Alembic (chosen migration tool) once sql/schema is finalized"
