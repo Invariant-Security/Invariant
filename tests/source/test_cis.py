@@ -118,7 +118,7 @@ def test_download_benchmark_matches_known_good_hash():
     )
 
 
-def test_known_cis_documents_has_the_6_debian_benchmarks():
+def test_known_cis_documents_has_the_6_debian_and_10_ubuntu_benchmarks():
     assert set(KNOWN_CIS_DOCUMENTS) == {
         "cis-debian-linux-9",
         "cis-debian-linux-10",
@@ -126,6 +126,16 @@ def test_known_cis_documents_has_the_6_debian_benchmarks():
         "cis-debian-linux-11-stig",
         "cis-debian-linux-12",
         "cis-debian-linux-13",
+        "cis-ubuntu-linux-12-04",
+        "cis-ubuntu-linux-14-04",
+        "cis-ubuntu-linux-16-04",
+        "cis-ubuntu-linux-18-04",
+        "cis-ubuntu-linux-20-04",
+        "cis-ubuntu-linux-20-04-stig",
+        "cis-ubuntu-linux-22-04",
+        "cis-ubuntu-linux-22-04-stig",
+        "cis-ubuntu-linux-24-04",
+        "cis-ubuntu-linux-24-04-stig",
     }
 
 
@@ -152,8 +162,8 @@ def test_known_cis_documents_document_slugs_are_unique():
 @pytest.mark.integration
 @pytest.mark.parametrize("document_name", list(KNOWN_CIS_DOCUMENTS))
 def test_find_benchmark_resolves_every_known_document(document_name):
-    """Hits the real cisecurity.org page for each of the 6 known documents
-    -- confirms the hardcoded technology_version/benchmark_version pairs in
+    """Hits the real cisecurity.org page for each known document -- confirms
+    the hardcoded technology_version/benchmark_version pairs in
     KNOWN_CIS_DOCUMENTS still resolve to a real entry (this is exactly the
     kind of thing that silently breaks if CIS reorganizes their site).
     """
@@ -163,4 +173,9 @@ def test_find_benchmark_resolves_every_known_document(document_name):
         entry["product_slug"], entry["technology_version"], entry["benchmark_version"]
     )
 
-    assert metadata.title.startswith("CIS Debian Linux")
+    # CIS's own `title` field isn't perfectly consistent (e.g. the Ubuntu
+    # 12.04 v1.1.0 entry's title is just its filename, no "CIS " prefix) --
+    # only assert what's actually reliable: it's non-empty and the version
+    # we asked for is the version we got back.
+    assert metadata.title
+    assert metadata.benchmark_version == entry["benchmark_version"]
