@@ -1,0 +1,29 @@
+# Local dev infra: PostgreSQL + Adminer (a lightweight web UI to browse the
+# database -- open http://localhost:8080, System: PostgreSQL, Server:
+# postgres, Username: invariant, Password: invariant_dev, Database:
+# invariant). Credentials match .env.example's DATABASE_URL so no extra
+# wiring is needed between this and the app.
+#
+# Run from repo root: docker compose -f infra/docker-compose.yml up
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: invariant
+      POSTGRES_PASSWORD: invariant_dev
+      POSTGRES_DB: invariant
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  adminer:
+    image: adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:

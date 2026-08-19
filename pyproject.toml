@@ -10,6 +10,8 @@ dependencies = [
     "psycopg[binary]",
     "typer",
     "alembic",
+    "playwright",
+    "pypdf",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +22,11 @@ dev = [
 
 [project.scripts]
 invariant = "invariant.cli.main:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits a real external service (e.g. cisecurity.org) instead of using mocks/fixtures",
+]
 
 [build-system]
 requires = ["hatchling"]
