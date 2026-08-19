@@ -29,8 +29,8 @@ def test_fetch_wires_cis_download_into_collector(monkeypatch, capsys):
     artifact = fetch_module.fetch("cis-debian-linux-10")
 
     assert calls["product_label"] == "Debian Linux"
-    assert calls["version_label"] == "CIS Debian Linux 10 Benchmark v1.0.0"
-    assert calls["save_raw_artifact_args"] == (b"%PDF-fake-content", "cis", "debian_linux_10", "1.0.0", "pdf")
+    assert calls["version_label"] == "CIS Debian Linux 10 Benchmark v2.0.0"
+    assert calls["save_raw_artifact_args"] == (b"%PDF-fake-content", "cis", "debian_linux_10", "2.0.0", "pdf")
     assert artifact.content_hash == "deadbeef"
     assert "deadbeef" in capsys.readouterr().out
 

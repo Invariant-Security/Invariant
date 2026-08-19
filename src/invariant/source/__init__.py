@@ -168,6 +168,67 @@ class CIS:
                 browser.close()
 
 
+# The CIS Debian benchmarks the bxsec Docker demo targets, one entry per
+# document -- the *latest* published version of each (older archived
+# versions are left out for now; document_versions supports keeping more
+# than one version per document if a specific older one is ever needed).
+# Keyed by the name used on the CLI (`invariant fetch <document>`).
+# technology_version/benchmark_version -> CIS.find_benchmark() (discovery,
+# no login). product_label/version_label -> CIS.download_benchmark() (the
+# actual PDF, also no login). All 6 confirmed live against
+# cisecurity.org/benchmark/debian_linux and downloads.cisecurity.org.
+KNOWN_CIS_DOCUMENTS = {
+    "cis-debian-linux-9": {
+        "document_slug": "debian_linux_9",
+        "product_slug": "debian_linux",
+        "technology_version": "9",
+        "benchmark_version": "1.0.1",
+        "product_label": "Debian Linux",
+        "version_label": "CIS Debian Linux 9 Benchmark v1.0.1",
+    },
+    "cis-debian-linux-10": {
+        "document_slug": "debian_linux_10",
+        "product_slug": "debian_linux",
+        "technology_version": "10 v2.0.0",
+        "benchmark_version": "2.0.0",
+        "product_label": "Debian Linux",
+        "version_label": "CIS Debian Linux 10 Benchmark v2.0.0",
+    },
+    "cis-debian-linux-11": {
+        "document_slug": "debian_linux_11",
+        "product_slug": "debian_linux",
+        "technology_version": "11",
+        "benchmark_version": "2.0.0",
+        "product_label": "Debian Linux",
+        "version_label": "CIS Debian Linux 11 Benchmark v2.0.0",
+    },
+    "cis-debian-linux-11-stig": {
+        "document_slug": "debian_linux_11_stig",
+        "product_slug": "debian_linux",
+        "technology_version": "11STIG v1.0.0",
+        "benchmark_version": "1.0.0",
+        "product_label": "Debian Linux",
+        "version_label": "CIS Debian Linux 11 STIG Benchmark v1.0.0",
+    },
+    "cis-debian-linux-12": {
+        "document_slug": "debian_linux_12",
+        "product_slug": "debian_linux",
+        "technology_version": "12",
+        "benchmark_version": "2.0.0",
+        "product_label": "Debian Linux",
+        "version_label": "CIS Debian Linux 12 Benchmark v2.0.0",
+    },
+    "cis-debian-linux-13": {
+        "document_slug": "debian_linux_13",
+        "product_slug": "debian_linux",
+        "technology_version": "13",
+        "benchmark_version": "1.0.0",
+        "product_label": "Debian Linux",
+        "version_label": "CIS Debian Linux 13 Benchmark v1.0.0",
+    },
+}
+
+
 class AWSSource:
     """AWS source adapter interface."""
 

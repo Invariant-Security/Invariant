@@ -1,22 +1,26 @@
 # TODO: `invariant import <document>` -- normalize extracted items and persist them.
-# Only "cis-debian-linux-10" is wired up so far (same scope as fetch.py/extract.py).
+# Only the documents in source.KNOWN_CIS_DOCUMENTS are wired up so far
+# (same scope as fetch.py/extract.py).
 
 from dataclasses import asdict
 
-from invariant import normalizer
+from invariant import normalizer, source
 from invariant.storage import postgres as db
 
 
 def import_document(document: str):
-    if document != "cis-debian-linux-10":
-        raise ValueError(f"unknown document: {document!r} (only 'cis-debian-linux-10' for now)")
+    known = source.KNOWN_CIS_DOCUMENTS.get(document)
+    if known is None:
+        known_keys = ", ".join(source.KNOWN_CIS_DOCUMENTS)
+        raise ValueError(f"unknown document: {document!r} (known: {known_keys})")
 
+    document_slug = known["document_slug"]
     conn = db.connect()
-    version_id = db.select_latest_document_version_id(conn, source="cis", document="debian_linux_10")
+    version_id = db.select_latest_document_version_id(conn, source="cis", document=document_slug)
     if version_id is None:
         raise LookupError(
-            "no document_version found for cis/debian_linux_10 in the database "
-            "-- run `invariant extract cis-debian-linux-10` first"
+            f"no document_version found for cis/{document_slug} in the database "
+            f"-- run `invariant extract {document}` first"
         )
 
     control_ids = []

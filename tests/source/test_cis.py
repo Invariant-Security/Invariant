@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from invariant.source import CIS, _extract_jss_state
+from invariant.source import KNOWN_CIS_DOCUMENTS, CIS, _extract_jss_state
 
 _FIXTURE_STATE = {
     "sitecore": {
@@ -116,3 +116,51 @@ def test_download_benchmark_matches_known_good_hash():
         hashlib.sha256(content).hexdigest()
         == "8abac02af919fee395b40bfda16d95e1b9040a2131fb62668fd89d8543e4030b"
     )
+
+
+def test_known_cis_documents_has_the_6_debian_benchmarks():
+    assert set(KNOWN_CIS_DOCUMENTS) == {
+        "cis-debian-linux-9",
+        "cis-debian-linux-10",
+        "cis-debian-linux-11",
+        "cis-debian-linux-11-stig",
+        "cis-debian-linux-12",
+        "cis-debian-linux-13",
+    }
+
+
+def test_known_cis_documents_entries_have_required_fields():
+    required_fields = {
+        "document_slug",
+        "product_slug",
+        "technology_version",
+        "benchmark_version",
+        "product_label",
+        "version_label",
+    }
+    for name, entry in KNOWN_CIS_DOCUMENTS.items():
+        assert set(entry) == required_fields, name
+        assert all(entry.values()), f"{name} has an empty field"
+
+
+def test_known_cis_documents_document_slugs_are_unique():
+    slugs = [entry["document_slug"] for entry in KNOWN_CIS_DOCUMENTS.values()]
+
+    assert len(slugs) == len(set(slugs))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("document_name", list(KNOWN_CIS_DOCUMENTS))
+def test_find_benchmark_resolves_every_known_document(document_name):
+    """Hits the real cisecurity.org page for each of the 6 known documents
+    -- confirms the hardcoded technology_version/benchmark_version pairs in
+    KNOWN_CIS_DOCUMENTS still resolve to a real entry (this is exactly the
+    kind of thing that silently breaks if CIS reorganizes their site).
+    """
+    entry = KNOWN_CIS_DOCUMENTS[document_name]
+
+    metadata = CIS().find_benchmark(
+        entry["product_slug"], entry["technology_version"], entry["benchmark_version"]
+    )
+
+    assert metadata.title.startswith("CIS Debian Linux")

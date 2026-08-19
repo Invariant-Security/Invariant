@@ -1,21 +1,25 @@
 # TODO: `invariant extract <document>` -- run the extractor over a stored raw artifact.
-# Only "cis-debian-linux-10" is wired up so far (same scope as fetch.py).
+# Only the documents in source.KNOWN_CIS_DOCUMENTS are wired up so far
+# (same scope as fetch.py).
 
 import glob
 import json
 from dataclasses import asdict
 from pathlib import Path
 
-from invariant import extractor
+from invariant import extractor, source
 from invariant.collector import DEFAULT_RAW_DIR
 from invariant.storage import postgres as db
 
 
 def extract(document: str):
-    if document != "cis-debian-linux-10":
-        raise ValueError(f"unknown document: {document!r} (only 'cis-debian-linux-10' for now)")
+    known = source.KNOWN_CIS_DOCUMENTS.get(document)
+    if known is None:
+        known_keys = ", ".join(source.KNOWN_CIS_DOCUMENTS)
+        raise ValueError(f"unknown document: {document!r} (known: {known_keys})")
 
-    metadata = _latest_raw_artifact_metadata(source="cis", document="debian_linux_10")
+    document_slug = known["document_slug"]
+    metadata = _latest_raw_artifact_metadata(source="cis", document=document_slug)
     pdf_path = Path(metadata["path"])
 
     conn = db.connect()
@@ -63,6 +67,6 @@ def _latest_raw_artifact_metadata(*, source: str, document: str) -> dict:
     if not matches:
         raise FileNotFoundError(
             f"no raw artifact metadata found for {source}/{document} in {DEFAULT_RAW_DIR} "
-            "-- run `invariant fetch cis-debian-linux-10` first"
+            f"-- run `invariant fetch` for it first"
         )
     return json.loads(Path(matches[-1]).read_text())
