@@ -40,6 +40,15 @@ _SECTION_LABELS = (
     "Impact",
 )
 
+# Matches a label anywhere in the text, not just at the start of a line --
+# see _split_sections() for why. Sorted longest-first so a multi-word label
+# never loses to a shorter one that happens to be a prefix of it.
+_SECTION_LABEL_RE = re.compile(
+    r"(?:(?<=\s)|^)(?P<label>"
+    + "|".join(re.escape(label) for label in sorted(_SECTION_LABELS, key=len, reverse=True))
+    + r"):\s*"
+)
+
 # A title is allowed to wrap across this many extra lines before giving up
 # on finding a "(Scored)"/"(Not Scored)" suffix -- real titles never wrap
 # more than once in this document.
@@ -163,16 +172,20 @@ def _pdf_lines(pdf_path: Path) -> list[str]:
 
 
 def _split_sections(lines: list[str]) -> dict[str, str]:
-    boundaries = [
-        (line.strip().rstrip(":"), i)
-        for i, line in enumerate(lines)
-        if line.strip().rstrip(":") in _SECTION_LABELS and line.strip().endswith(":")
-    ]
+    # Section labels are normally on their own line, but some older CIS
+    # PDFs run a label straight into the end of the previous sentence with
+    # no line break (confirmed: CIS Ubuntu 12.04 LTS Server Benchmark
+    # v1.1.0, section 3.1 -- "...changing the file. Audit:  Perform the
+    # following..."). Matching by position in the joined text (not by
+    # whole-line equality) handles both cases the same way.
+    text = "\n".join(lines)
+    matches = list(_SECTION_LABEL_RE.finditer(text))
 
     sections = {}
-    for i, (label, line_no) in enumerate(boundaries):
-        next_line_no = boundaries[i + 1][1] if i + 1 < len(boundaries) else len(lines)
-        sections[label] = "\n".join(lines[line_no + 1 : next_line_no]).strip()
+    for i, match in enumerate(matches):
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections[match.group("label")] = text[start:end].strip()
     return sections
 
 

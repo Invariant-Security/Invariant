@@ -1,4 +1,4 @@
-from invariant.extractor import _find_headers, _non_empty_lines
+from invariant.extractor import _find_headers, _non_empty_lines, _split_sections
 
 
 def _lines(text: str) -> list[str]:
@@ -51,6 +51,29 @@ def test_find_headers_ignores_lines_without_profile_applicability_anchor():
     headers = _find_headers(lines)
 
     assert headers == []
+
+
+def test_split_sections_handles_label_glued_to_previous_sentence():
+    """Some older CIS PDFs run a section label straight into the end of the
+    previous sentence with no line break -- confirmed against the real CIS
+    Ubuntu 12.04 LTS Server Benchmark v1.1.0 PDF, section 3.1 ("...changing
+    the file. Audit:  Perform the following...").
+    """
+    lines = _lines(
+        "Rationale:\n"
+        "Setting the owner and group to root prevents non-root users from changing the file. Audit:\n"
+        "Perform the following to determine if the file has the correct ownership.\n"
+        "Remediation:\n"
+        "Run the following command.\n"
+    )
+
+    sections = _split_sections(lines)
+
+    assert sections["Rationale"] == (
+        "Setting the owner and group to root prevents non-root users from changing the file."
+    )
+    assert sections["Audit"] == "Perform the following to determine if the file has the correct ownership."
+    assert sections["Remediation"] == "Run the following command."
 
 
 def test_non_empty_lines_strips_both_bullet_glyph_variants():
