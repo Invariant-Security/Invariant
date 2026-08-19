@@ -19,6 +19,7 @@ _UPSERT_EXTRACTED_ITEM = (_QUERIES_DIR / "upsert_extracted_item.sql").read_text(
 _UPSERT_CONTROL = (_QUERIES_DIR / "upsert_control.sql").read_text()
 _SELECT_LATEST_DOCUMENT_VERSION_ID = (_QUERIES_DIR / "select_latest_document_version_id.sql").read_text()
 _SELECT_EXTRACTED_ITEMS = (_QUERIES_DIR / "select_extracted_items.sql").read_text()
+_SELECT_CONTROL_BY_EXTERNAL_ID = (_QUERIES_DIR / "select_control_by_external_id.sql").read_text()
 
 
 def connect() -> psycopg.Connection:
@@ -133,3 +134,19 @@ def select_extracted_items(conn: psycopg.Connection, *, document_version_id: int
             {"external_id": external_id, "title": title, "description": description, "raw_data": raw_data}
             for external_id, title, description, raw_data in cur.fetchall()
         ]
+
+
+def select_control_by_external_id(conn: psycopg.Connection, *, document: str, external_id: str) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(_SELECT_CONTROL_BY_EXTERNAL_ID, {"document": document, "external_id": external_id})
+        row = cur.fetchone()
+        if row is None:
+            return None
+        title, normalized_data, source_name, document_name, publisher_version = row
+        return {
+            "title": title,
+            "normalized_data": normalized_data,
+            "source_name": source_name,
+            "document_name": document_name,
+            "publisher_version": publisher_version,
+        }

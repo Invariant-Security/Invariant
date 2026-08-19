@@ -4,7 +4,7 @@
 # diff/check-updates/notify/source/document/control subcommands.
 
 import typer
-from invariant.cli import fetch, extract, diff, check_updates, notify, import_document
+from invariant.cli import fetch, extract, diff, check_updates, notify, import_document, assess
 
 app = typer.Typer()
 
@@ -14,6 +14,7 @@ app.command("diff")(diff.diff)
 app.command("check_updates")(check_updates.check_updates)
 app.command("notify")(notify.notify)
 app.command("import_document")(import_document.import_document)
+app.command("assess")(assess.assess)
 
 
 def main() -> None:
