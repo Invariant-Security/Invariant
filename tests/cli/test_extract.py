@@ -47,18 +47,30 @@ def test_extract_wires_extractor_output_into_storage(monkeypatch, capsys):
         },
     )
 
-    fake_recommendation = ExtractedRecommendation(
-        external_id="5.2.10",
-        title="Ensure SSH root login is disabled",
-        scored=True,
-        profile_applicability=["Level 1 - Server"],
-        description="desc",
-        rationale="rationale",
-        audit="audit",
-        remediation="remediation",
-    )
+    fake_recommendations = [
+        ExtractedRecommendation(
+            external_id="5.2.10",
+            title="Ensure SSH root login is disabled",
+            scored=True,
+            profile_applicability=["Level 1 - Server"],
+            description="desc",
+            rationale="rationale",
+            audit="audit",
+            remediation="remediation",
+        ),
+        ExtractedRecommendation(
+            external_id="6.1.4",
+            title="Ensure permissions on /etc/shadow are configured",
+            scored=True,
+            profile_applicability=["Level 1 - Server"],
+            description="desc-2",
+            rationale="rationale-2",
+            audit="audit-2",
+            remediation="remediation-2",
+        ),
+    ]
     monkeypatch.setattr(
-        extract_module.extractor, "extract_recommendation", lambda path, external_id: fake_recommendation
+        extract_module.extractor, "extract_all_recommendations", lambda path: fake_recommendations
     )
 
     class _FakeConn:
@@ -81,8 +93,8 @@ def test_extract_wires_extractor_output_into_storage(monkeypatch, capsys):
 
     item_ids = extract_module.extract("cis-debian-linux-10")
 
-    assert item_ids == [1, 2, 3]
-    assert len(calls["upserted_items"]) == 3
+    assert item_ids == [1, 2]
+    assert len(calls["upserted_items"]) == 2
     assert calls["upserted_items"][0]["document_version_id"] == 3
     assert calls["upserted_items"][0]["external_id"] == "5.2.10"
     assert calls["upserted_items"][0]["raw_data"] == {
@@ -92,6 +104,9 @@ def test_extract_wires_extractor_output_into_storage(monkeypatch, capsys):
         "audit": "audit",
         "remediation": "remediation",
     }
+    assert calls["upserted_items"][1]["external_id"] == "6.1.4"
     assert calls["committed"] is True
     assert calls["closed"] is True
-    assert "extracted 5.2.10" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "extracted 5.2.10" in output
+    assert "extracted 6.1.4" in output

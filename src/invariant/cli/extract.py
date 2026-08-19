@@ -1,9 +1,5 @@
 # TODO: `invariant extract <document>` -- run the extractor over a stored raw artifact.
 # Only "cis-debian-linux-10" is wired up so far (same scope as fetch.py).
-# Recommendation IDs are hardcoded to the 3 the bxsec Docker demo actually
-# checks (SSH root login, /etc/shadow permissions, duplicate UID 0) --
-# extracting all ~235 recommendations in the benchmark is a separate,
-# larger increment, not needed yet.
 
 import glob
 import json
@@ -13,8 +9,6 @@ from pathlib import Path
 from invariant import extractor
 from invariant.collector import DEFAULT_RAW_DIR
 from invariant.storage import postgres as db
-
-DEMO_RECOMMENDATION_IDS = ["5.2.10", "6.1.4", "6.2.6"]
 
 
 def extract(document: str):
@@ -41,8 +35,7 @@ def extract(document: str):
     )
 
     item_ids = []
-    for external_id in DEMO_RECOMMENDATION_IDS:
-        rec = extractor.extract_recommendation(pdf_path, external_id)
+    for rec in extractor.extract_all_recommendations(pdf_path):
         raw_data = asdict(rec)
         for column in ("external_id", "title", "description"):
             raw_data.pop(column)
