@@ -99,6 +99,108 @@ def _evidence_ssh_login_grace_time(facts: SystemFacts) -> str:
     return f"sshd_config: LoginGraceTime {value}"
 
 
+def _packages_absent(facts: SystemFacts, *names: str) -> bool:
+    """True if none of `names` are in the collected package set -- the
+    shared shape behind every "package X is not installed" check below.
+    Some CIS documents ask for more than one package name to cover a
+    rename/alternate across releases (e.g. "telnet" vs "inetutils-telnet");
+    passing every known name and requiring all of them absent is a safe
+    superset of the single-name audits, since on a genuinely clean system
+    every name in the set is absent anyway.
+    """
+    return not any(name in facts.installed_packages for name in names)
+
+
+def _evaluate_ldap_client_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "ldap-utils")
+
+
+def _evidence_ldap_client_not_installed(facts: SystemFacts) -> str:
+    present = "ldap-utils" in facts.installed_packages
+    return f"installed_packages: ldap-utils {'present' if present else 'absent'}"
+
+
+def _evaluate_nis_client_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "nis")
+
+
+def _evidence_nis_client_not_installed(facts: SystemFacts) -> str:
+    present = "nis" in facts.installed_packages
+    return f"installed_packages: nis {'present' if present else 'absent'}"
+
+
+def _evaluate_xinetd_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "xinetd")
+
+
+def _evidence_xinetd_not_installed(facts: SystemFacts) -> str:
+    present = "xinetd" in facts.installed_packages
+    return f"installed_packages: xinetd {'present' if present else 'absent'}"
+
+
+def _evaluate_rsync_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "rsync")
+
+
+def _evidence_rsync_not_installed(facts: SystemFacts) -> str:
+    present = "rsync" in facts.installed_packages
+    return f"installed_packages: rsync {'present' if present else 'absent'}"
+
+
+def _evaluate_x_window_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "xserver-common")
+
+
+def _evidence_x_window_not_installed(facts: SystemFacts) -> str:
+    present = "xserver-common" in facts.installed_packages
+    return f"installed_packages: xserver-common {'present' if present else 'absent'}"
+
+
+def _evaluate_telnet_client_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "telnet", "inetutils-telnet")
+
+
+def _evidence_telnet_client_not_installed(facts: SystemFacts) -> str:
+    present = [p for p in ("telnet", "inetutils-telnet") if p in facts.installed_packages]
+    return f"installed_packages: telnet/inetutils-telnet {'present: ' + ','.join(present) if present else 'absent'}"
+
+
+def _evaluate_rsh_client_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "rsh-client")
+
+
+def _evidence_rsh_client_not_installed(facts: SystemFacts) -> str:
+    present = "rsh-client" in facts.installed_packages
+    return f"installed_packages: rsh-client {'present' if present else 'absent'}"
+
+
+def _evaluate_ftp_client_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "ftp", "tnftp")
+
+
+def _evidence_ftp_client_not_installed(facts: SystemFacts) -> str:
+    present = [p for p in ("ftp", "tnftp") if p in facts.installed_packages]
+    return f"installed_packages: ftp/tnftp {'present: ' + ','.join(present) if present else 'absent'}"
+
+
+def _evaluate_talk_client_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "talk")
+
+
+def _evidence_talk_client_not_installed(facts: SystemFacts) -> str:
+    present = "talk" in facts.installed_packages
+    return f"installed_packages: talk {'present' if present else 'absent'}"
+
+
+def _evaluate_prelink_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "prelink")
+
+
+def _evidence_prelink_not_installed(facts: SystemFacts) -> str:
+    present = "prelink" in facts.installed_packages
+    return f"installed_packages: prelink {'present' if present else 'absent'}"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -147,6 +249,56 @@ CHECKS = [
         titles=["Ensure sshd LoginGraceTime is configured"],
         evaluate=_evaluate_ssh_login_grace_time,
         evidence=_evidence_ssh_login_grace_time,
+    ),
+    Check(
+        titles=["Ensure ldap client is not installed"],
+        evaluate=_evaluate_ldap_client_not_installed,
+        evidence=_evidence_ldap_client_not_installed,
+    ),
+    Check(
+        titles=["Ensure nis client is not installed", "Ensure NIS Client is not installed"],
+        evaluate=_evaluate_nis_client_not_installed,
+        evidence=_evidence_nis_client_not_installed,
+    ),
+    Check(
+        titles=["Ensure xinetd services are not in use"],
+        evaluate=_evaluate_xinetd_not_installed,
+        evidence=_evidence_xinetd_not_installed,
+    ),
+    Check(
+        titles=["Ensure rsync services are not in use"],
+        evaluate=_evaluate_rsync_not_installed,
+        evidence=_evidence_rsync_not_installed,
+    ),
+    Check(
+        titles=["Ensure X window server services are not in use"],
+        evaluate=_evaluate_x_window_not_installed,
+        evidence=_evidence_x_window_not_installed,
+    ),
+    Check(
+        titles=["Ensure telnet client is not installed"],
+        evaluate=_evaluate_telnet_client_not_installed,
+        evidence=_evidence_telnet_client_not_installed,
+    ),
+    Check(
+        titles=["Ensure rsh client is not installed"],
+        evaluate=_evaluate_rsh_client_not_installed,
+        evidence=_evidence_rsh_client_not_installed,
+    ),
+    Check(
+        titles=["Ensure ftp client is not installed"],
+        evaluate=_evaluate_ftp_client_not_installed,
+        evidence=_evidence_ftp_client_not_installed,
+    ),
+    Check(
+        titles=["Ensure talk client is not installed"],
+        evaluate=_evaluate_talk_client_not_installed,
+        evidence=_evidence_talk_client_not_installed,
+    ),
+    Check(
+        titles=["Ensure prelink is not installed"],
+        evaluate=_evaluate_prelink_not_installed,
+        evidence=_evidence_prelink_not_installed,
     ),
 ]
 
