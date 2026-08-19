@@ -7,7 +7,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from invariant import extractor, source
+from invariant import extractor, observability, source
 from invariant.collector import DEFAULT_RAW_DIR
 from invariant.storage import postgres as db
 
@@ -38,25 +38,29 @@ def extract(document: str):
         raw_artifact_path=metadata["path"],
     )
 
+    with observability.timed(f"parse:{document}"):
+        recommendations = extractor.extract_all_recommendations(pdf_path)
+
     item_ids = []
-    for rec in extractor.extract_all_recommendations(pdf_path):
-        raw_data = asdict(rec)
-        for column in ("external_id", "title", "description"):
-            raw_data.pop(column)
+    with observability.timed(f"persist_extracted_items:{document}"):
+        for rec in recommendations:
+            raw_data = asdict(rec)
+            for column in ("external_id", "title", "description"):
+                raw_data.pop(column)
 
-        item_id = db.upsert_extracted_item(
-            conn,
-            document_version_id=version_id,
-            external_id=rec.external_id,
-            title=rec.title,
-            description=rec.description,
-            category=None,
-            raw_data=raw_data,
-        )
-        item_ids.append(item_id)
-        print(f"extracted {rec.external_id} -> extracted_items.id={item_id}")
+            item_id = db.upsert_extracted_item(
+                conn,
+                document_version_id=version_id,
+                external_id=rec.external_id,
+                title=rec.title,
+                description=rec.description,
+                category=None,
+                raw_data=raw_data,
+            )
+            item_ids.append(item_id)
+            print(f"extracted {rec.external_id} -> extracted_items.id={item_id}")
 
-    conn.commit()
+        conn.commit()
     conn.close()
     return item_ids
 

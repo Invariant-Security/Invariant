@@ -6,7 +6,7 @@
 # (a general Source registry keyed by name, DB persistence instead of just
 # printing the result).
 
-from invariant import collector, source
+from invariant import collector, observability, source
 
 
 def fetch(source_name: str):
@@ -16,7 +16,8 @@ def fetch(source_name: str):
         raise ValueError(f"unknown source: {source_name!r} (known: {known})")
 
     cis = source.CIS()
-    content, extension = cis.download_benchmark(document["product_label"], document["version_label"])
+    with observability.timed(f"download:{source_name}"):
+        content, extension = cis.download_benchmark(document["product_label"], document["version_label"])
     artifact = collector.save_raw_artifact(
         content,
         source="cis",
