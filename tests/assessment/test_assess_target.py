@@ -22,40 +22,54 @@ def test_collect_facts_reads_real_ubuntu_container():
     assert facts.os_version_id == "20.04"
 
 
-def test_assess_debian_baseline_passes_both_controls():
+def _assert_all_pass_except(findings, failing_external_id):
+    """5 checks run per target now (not 2) -- rather than hardcode every
+    external_id (they drift per document, e.g. Debian 13 uses 5.1.21 where
+    the rest use 5.1.20), just assert the demo's "one problem per machine"
+    story: exactly one FAIL, everything else PASS.
+    """
+    statuses = {f.external_id: f.status for f in findings}
+    assert len(statuses) == 5
+    assert statuses[failing_external_id] == "FAIL"
+    assert all(status == "PASS" for eid, status in statuses.items() if eid != failing_external_id)
+
+
+def test_assess_debian_baseline_passes_all_controls():
     findings = assess_target("invariant-debian-baseline")
 
-    assert {f.external_id: f.status for f in findings} == {"5.1.20": "PASS", "7.1.5": "PASS"}
+    assert len(findings) == 5
+    assert all(f.status == "PASS" for f in findings)
 
 
 def test_assess_debian_ssh_bad_fails_only_ssh_control():
     findings = assess_target("invariant-debian-ssh-bad")
 
-    assert {f.external_id: f.status for f in findings} == {"5.1.20": "FAIL", "7.1.5": "PASS"}
+    _assert_all_pass_except(findings, "5.1.20")
 
 
 def test_assess_debian_permissions_bad_fails_only_shadow_control():
     findings = assess_target("invariant-debian-permissions-bad")
 
-    assert {f.external_id: f.status for f in findings} == {"5.1.21": "PASS", "7.1.5": "FAIL"}
+    _assert_all_pass_except(findings, "7.1.5")
 
 
-def test_assess_ubuntu_baseline_passes_both_controls():
+def test_assess_ubuntu_baseline_passes_all_controls():
     findings = assess_target("invariant-ubuntu-baseline")
 
-    assert {f.external_id: f.status for f in findings} == {"5.1.20": "PASS", "7.1.5": "PASS"}
+    assert len(findings) == 5
+    assert all(f.status == "PASS" for f in findings)
 
 
 def test_assess_ubuntu_ssh_bad_fails_only_ssh_control():
     findings = assess_target("invariant-ubuntu-ssh-bad")
 
-    assert {f.external_id: f.status for f in findings} == {"5.1.20": "FAIL", "7.1.5": "PASS"}
+    _assert_all_pass_except(findings, "5.1.20")
 
 
 def test_assess_ubuntu_permissions_bad_fails_only_shadow_control():
     findings = assess_target("invariant-ubuntu-permissions-bad")
 
-    assert {f.external_id: f.status for f in findings} == {"5.1.20": "PASS", "7.1.5": "FAIL"}
+    _assert_all_pass_except(findings, "7.1.5")
 
 
 def test_assess_finding_carries_full_traceability_chain():
