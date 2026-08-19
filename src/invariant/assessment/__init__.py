@@ -23,6 +23,7 @@ line) but still only proposes -- every candidate needs a human to verify
 it against a real target before it becomes a real Check here.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
@@ -99,6 +100,169 @@ def _evidence_ssh_login_grace_time(facts: SystemFacts) -> str:
     return f"sshd_config: LoginGraceTime {value}"
 
 
+def _evaluate_ssh_max_sessions(facts: SystemFacts) -> bool:
+    value = facts.sshd_config.get("maxsessions", "")
+    try:
+        return int(value) <= 10
+    except ValueError:
+        return False
+
+
+def _evidence_ssh_max_sessions(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("maxsessions", "<not set>")
+    return f"sshd_config: MaxSessions {value}"
+
+
+def _evaluate_ssh_log_level(facts: SystemFacts) -> bool:
+    """Matches the real audit condition (control 5.1.14 in our two demo
+    documents): "verify that output matches loglevel VERBOSE or loglevel
+    INFO" -- both are accepted, not just INFO. (Some older CIS documents,
+    e.g. ubuntu_linux_12_04/14_04, have a stricter "LogLevel is set to
+    INFO" control that rejects VERBOSE -- that's a different control with
+    different pass criteria, not merged in here.)
+    """
+    return facts.sshd_config.get("loglevel", "").lower() in ("info", "verbose")
+
+
+def _evidence_ssh_log_level(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("loglevel", "<not set>")
+    return f"sshd_config: LogLevel {value}"
+
+
+def _evaluate_ssh_use_pam(facts: SystemFacts) -> bool:
+    return facts.sshd_config.get("usepam", "").lower() == "yes"
+
+
+def _evidence_ssh_use_pam(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("usepam", "<not set>")
+    return f"sshd_config: UsePAM {value}"
+
+
+def _evaluate_ssh_disable_forwarding(facts: SystemFacts) -> bool:
+    """This is the modern replacement for the CIS "AllowTcpForwarding is
+    disabled" control originally scoped for this check: both of our real
+    demo documents (debian_linux_11, ubuntu_linux_20_04) use a single
+    DisableForwarding directive (OpenSSH 8.7+) that disables all forwarding
+    types at once, not per-directive AllowTcpForwarding/AllowAgentForwarding
+    controls -- "Ensure SSH AllowTcpForwarding is disabled" doesn't exist as
+    a title in either document (confirmed via Postgres), so it was dropped
+    in favor of this real, resolvable control.
+    """
+    return facts.sshd_config.get("disableforwarding", "").lower() == "yes"
+
+
+def _evidence_ssh_disable_forwarding(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("disableforwarding", "<not set>")
+    return f"sshd_config: DisableForwarding {value}"
+
+
+# Ciphers flagged "weak" by the real CIS audit regex (control 5.1.6):
+# cbc-mode 3des/blowfish/cast128/aes, arcfour variants, an old rijndael-cbc
+# alias, and chacha20-poly1305@openssh.com (flagged for CVE-2023-48795,
+# the Terrapin attack, unless patched -- treated as weak here since the
+# audit command itself flags it unconditionally and a patch level isn't
+# something facts.py collects).
+_WEAK_CIPHER_RE = re.compile(
+    r"^(3des|blowfish|cast128|aes(128|192|256))-cbc$"
+    r"|^arcfour(128|256)?$"
+    r"|^rijndael-cbc@lysator\.liu\.se$"
+    r"|^chacha20-poly1305@openssh\.com$"
+)
+
+
+def _evaluate_ssh_ciphers(facts: SystemFacts) -> bool:
+    ciphers = facts.sshd_config.get("ciphers", "")
+    if not ciphers:
+        return False
+    return not any(_WEAK_CIPHER_RE.match(c.strip().lower()) for c in ciphers.split(","))
+
+
+def _evidence_ssh_ciphers(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("ciphers", "<not set>")
+    return f"sshd_config: Ciphers {value}"
+
+
+# Key exchange algorithms flagged "weak" by the real CIS audit (control
+# 5.1.12) -- the plain "weak KexAlgorithms" control that applies to our
+# demo documents, not the separate FIPS-validated-allowlist variant (only
+# present in *_stig documents, which aren't among our demo targets).
+_WEAK_KEX_ALGORITHMS = {
+    "diffie-hellman-group1-sha1",
+    "diffie-hellman-group14-sha1",
+    "diffie-hellman-group-exchange-sha1",
+}
+
+
+def _evaluate_ssh_kex_algorithms(facts: SystemFacts) -> bool:
+    kex = facts.sshd_config.get("kexalgorithms", "")
+    if not kex:
+        return False
+    algorithms = {a.strip().lower() for a in kex.split(",")}
+    return not (algorithms & _WEAK_KEX_ALGORITHMS)
+
+
+def _evidence_ssh_kex_algorithms(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("kexalgorithms", "<not set>")
+    return f"sshd_config: KexAlgorithms {value}"
+
+
+_PRIVATE_HOST_KEY_PATHS = [
+    "/etc/ssh/ssh_host_rsa_key",
+    "/etc/ssh/ssh_host_ecdsa_key",
+    "/etc/ssh/ssh_host_ed25519_key",
+]
+
+_PUBLIC_HOST_KEY_PATHS = [
+    "/etc/ssh/ssh_host_rsa_key.pub",
+    "/etc/ssh/ssh_host_ecdsa_key.pub",
+    "/etc/ssh/ssh_host_ed25519_key.pub",
+]
+
+
+def _evaluate_ssh_private_host_key_permissions(facts: SystemFacts) -> bool:
+    """Mode 0600 or more restrictive, owned by root, for each private host
+    key file that exists -- a simplified version of the real CIS audit
+    script, which also accepts group-owned 0640 for a dedicated
+    ssh_keys/_ssh group; none of our demo targets use that group, so it's
+    not modeled here. A target with no host key files present passes (same
+    as the real audit script's "No openSSH private keys found" -> PASS),
+    since that's a "nothing to secure" state, not a misconfiguration.
+    """
+    present = [facts.file_stats[p] for p in _PRIVATE_HOST_KEY_PATHS if facts.file_stats.get(p) and facts.file_stats[p].mode is not None]
+    if not present:
+        return True
+    return all(stat.mode <= 0o600 and stat.uid == 0 for stat in present)
+
+
+def _evidence_ssh_private_host_key_permissions(facts: SystemFacts) -> str:
+    parts = [
+        f"{path}: mode={oct(stat.mode)} uid={stat.uid}"
+        for path in _PRIVATE_HOST_KEY_PATHS
+        if (stat := facts.file_stats.get(path)) and stat.mode is not None
+    ]
+    return "; ".join(parts) if parts else "no SSH private host key files found"
+
+
+def _evaluate_ssh_public_host_key_permissions(facts: SystemFacts) -> bool:
+    """Mode 0644 or more restrictive, owned by root:root, for each public
+    host key file that exists. Same "nothing to secure" PASS as the private
+    key check when no host key files are present.
+    """
+    present = [facts.file_stats[p] for p in _PUBLIC_HOST_KEY_PATHS if facts.file_stats.get(p) and facts.file_stats[p].mode is not None]
+    if not present:
+        return True
+    return all(stat.mode <= 0o644 and stat.uid == 0 and stat.gname == "root" for stat in present)
+
+
+def _evidence_ssh_public_host_key_permissions(facts: SystemFacts) -> str:
+    parts = [
+        f"{path}: mode={oct(stat.mode)} uid={stat.uid} gid={stat.gid}({stat.gname})"
+        for path in _PUBLIC_HOST_KEY_PATHS
+        if (stat := facts.file_stats.get(path)) and stat.mode is not None
+    ]
+    return "; ".join(parts) if parts else "no SSH public host key files found"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -147,6 +311,69 @@ CHECKS = [
         titles=["Ensure sshd LoginGraceTime is configured"],
         evaluate=_evaluate_ssh_login_grace_time,
         evidence=_evidence_ssh_login_grace_time,
+    ),
+    Check(
+        titles=[
+            "Ensure sshd MaxSessions is configured",
+            "Ensure SSH MaxSessions is set to 10 or less",
+            "Ensure SSH MaxSessions is limited",
+        ],
+        evaluate=_evaluate_ssh_max_sessions,
+        evidence=_evidence_ssh_max_sessions,
+    ),
+    Check(
+        titles=[
+            "Ensure sshd LogLevel is configured",
+            "Ensure SSH LogLevel is appropriate",
+        ],
+        evaluate=_evaluate_ssh_log_level,
+        evidence=_evidence_ssh_log_level,
+    ),
+    Check(
+        titles=[
+            "Ensure sshd UsePAM is enabled",
+            "Ensure SSH PAM is enabled",
+        ],
+        evaluate=_evaluate_ssh_use_pam,
+        evidence=_evidence_ssh_use_pam,
+    ),
+    Check(
+        titles=["Ensure sshd DisableForwarding is enabled"],
+        evaluate=_evaluate_ssh_disable_forwarding,
+        evidence=_evidence_ssh_disable_forwarding,
+    ),
+    Check(
+        titles=[
+            "Ensure sshd Ciphers are configured",
+            "Ensure only strong ciphers are used",
+            "Ensure only strong Ciphers are used",
+        ],
+        evaluate=_evaluate_ssh_ciphers,
+        evidence=_evidence_ssh_ciphers,
+    ),
+    Check(
+        titles=[
+            "Ensure sshd KexAlgorithms is configured",
+            "Ensure only strong Key Exchange algorithms are used",
+        ],
+        evaluate=_evaluate_ssh_kex_algorithms,
+        evidence=_evidence_ssh_kex_algorithms,
+    ),
+    Check(
+        titles=[
+            "Ensure permissions on SSH private host key files are configured",
+            "Ensure access to SSH private host key files is configured",
+        ],
+        evaluate=_evaluate_ssh_private_host_key_permissions,
+        evidence=_evidence_ssh_private_host_key_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure permissions on SSH public host key files are configured",
+            "Ensure access to SSH public host key files is configured",
+        ],
+        evaluate=_evaluate_ssh_public_host_key_permissions,
+        evidence=_evidence_ssh_public_host_key_permissions,
     ),
 ]
 
