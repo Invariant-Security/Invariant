@@ -227,7 +227,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Debian Linux 13 Benchmark v1.0.0",
     },
     "cis-ubuntu-linux-12-04": {
-        "document_slug": "ubuntu_12_04",
+        "document_slug": "ubuntu_linux_12_04",
         "product_slug": "ubuntu_linux",
         "technology_version": "12.04",
         "benchmark_version": "1.1.0",
@@ -235,7 +235,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Ubuntu 12.04 LTS Server Benchmark v1.1.0",
     },
     "cis-ubuntu-linux-14-04": {
-        "document_slug": "ubuntu_14_04",
+        "document_slug": "ubuntu_linux_14_04",
         "product_slug": "ubuntu_linux",
         "technology_version": "14.04",
         "benchmark_version": "2.1.0",
@@ -243,7 +243,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Ubuntu Linux 14.04 LTS Benchmark v2.1.0",
     },
     "cis-ubuntu-linux-16-04": {
-        "document_slug": "ubuntu_16_04",
+        "document_slug": "ubuntu_linux_16_04",
         "product_slug": "ubuntu_linux",
         "technology_version": "16.04",
         "benchmark_version": "2.0.0",
@@ -251,7 +251,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Ubuntu Linux 16.04 LTS Benchmark v2.0.0",
     },
     "cis-ubuntu-linux-18-04": {
-        "document_slug": "ubuntu_18_04",
+        "document_slug": "ubuntu_linux_18_04",
         "product_slug": "ubuntu_linux",
         "technology_version": "18.04",
         "benchmark_version": "2.2.0",
@@ -259,7 +259,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Ubuntu Linux 18.04 LTS Benchmark v2.2.0",
     },
     "cis-ubuntu-linux-20-04": {
-        "document_slug": "ubuntu_20_04",
+        "document_slug": "ubuntu_linux_20_04",
         "product_slug": "ubuntu_linux",
         "technology_version": "20.04",
         "benchmark_version": "3.0.0",
@@ -267,7 +267,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Ubuntu Linux 20.04 LTS Benchmark v3.0.0",
     },
     "cis-ubuntu-linux-20-04-stig": {
-        "document_slug": "ubuntu_20_04_stig",
+        "document_slug": "ubuntu_linux_20_04_stig",
         "product_slug": "ubuntu_linux",
         "technology_version": "20.04STIG",
         "benchmark_version": "2.0.0",
@@ -275,7 +275,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Ubuntu Linux 20.04 LTS STIG Benchmark v2.0.0",
     },
     "cis-ubuntu-linux-22-04": {
-        "document_slug": "ubuntu_22_04",
+        "document_slug": "ubuntu_linux_22_04",
         "product_slug": "ubuntu_linux",
         "technology_version": "22.04",
         "benchmark_version": "3.0.0",
@@ -283,7 +283,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Ubuntu Linux 22.04 LTS Benchmark v3.0.0",
     },
     "cis-ubuntu-linux-22-04-stig": {
-        "document_slug": "ubuntu_22_04_stig",
+        "document_slug": "ubuntu_linux_22_04_stig",
         "product_slug": "ubuntu_linux",
         "technology_version": "Ubuntu Linux 22.04 LTS",
         "benchmark_version": "1.0.0",
@@ -291,7 +291,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Ubuntu Linux 22.04 LTS STIG Benchmark v1.0.0",
     },
     "cis-ubuntu-linux-24-04": {
-        "document_slug": "ubuntu_24_04",
+        "document_slug": "ubuntu_linux_24_04",
         "product_slug": "ubuntu_linux",
         "technology_version": "24.04",
         "benchmark_version": "2.0.0",
@@ -299,7 +299,7 @@ KNOWN_CIS_DOCUMENTS = {
         "version_label": "CIS Ubuntu Linux 24.04 LTS Benchmark v2.0.0",
     },
     "cis-ubuntu-linux-24-04-stig": {
-        "document_slug": "ubuntu_24_04_stig",
+        "document_slug": "ubuntu_linux_24_04_stig",
         "product_slug": "ubuntu_linux",
         "technology_version": "Ubuntu Linux 24.04 LTS",
         "benchmark_version": "1.0.0",

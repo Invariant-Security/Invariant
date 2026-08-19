@@ -1,8 +1,22 @@
 import pytest
 
-from invariant.assessment import assess_target
+from invariant.assessment import assess_target, detect_os
 
 pytestmark = pytest.mark.integration
+
+
+def test_detect_os_reads_real_debian_container():
+    os_info = detect_os("invariant-debian-baseline")
+
+    assert os_info["ID"] == "debian"
+    assert os_info["VERSION_ID"] == "11"
+
+
+def test_detect_os_reads_real_ubuntu_container():
+    os_info = detect_os("invariant-ubuntu-baseline")
+
+    assert os_info["ID"] == "ubuntu"
+    assert os_info["VERSION_ID"] == "20.04"
 
 
 def test_assess_debian_baseline_passes_both_controls():
@@ -51,6 +65,9 @@ def test_assess_finding_carries_full_traceability_chain():
     assert "permitrootlogin" in finding.evidence_output.lower()
 
 
-def test_assess_target_rejects_unknown_target():
-    with pytest.raises(ValueError):
+def test_assess_target_raises_when_os_cannot_be_detected():
+    """No static target list to validate against anymore -- an unknown or
+    unreachable container just fails OS detection naturally.
+    """
+    with pytest.raises(LookupError):
         assess_target("not-a-real-container")

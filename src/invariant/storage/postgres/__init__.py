@@ -20,6 +20,7 @@ _UPSERT_CONTROL = (_QUERIES_DIR / "upsert_control.sql").read_text()
 _SELECT_LATEST_DOCUMENT_VERSION_ID = (_QUERIES_DIR / "select_latest_document_version_id.sql").read_text()
 _SELECT_EXTRACTED_ITEMS = (_QUERIES_DIR / "select_extracted_items.sql").read_text()
 _SELECT_CONTROL_BY_EXTERNAL_ID = (_QUERIES_DIR / "select_control_by_external_id.sql").read_text()
+_SELECT_CONTROL_BY_TITLE = (_QUERIES_DIR / "select_control_by_title.sql").read_text()
 
 
 def connect() -> psycopg.Connection:
@@ -146,6 +147,30 @@ def select_control_by_external_id(conn: psycopg.Connection, *, document: str, ex
         return {
             "title": title,
             "normalized_data": normalized_data,
+            "source_name": source_name,
+            "document_name": document_name,
+            "publisher_version": publisher_version,
+        }
+
+
+def select_control_by_title(conn: psycopg.Connection, *, document: str, titles: list[str]) -> dict | None:
+    """Looks up a control by one of several known title variants -- exact
+    title wording drifts a little between CIS documents (confirmed:
+    "Ensure permissions on /etc/shadow are configured" vs "Ensure access to
+    /etc/shadow is configured" for the same underlying check), so callers
+    pass every variant they know about rather than relying on one exact
+    string or a stable external_id (also confirmed to drift between
+    documents).
+    """
+    with conn.cursor() as cur:
+        cur.execute(_SELECT_CONTROL_BY_TITLE, {"document": document, "titles": titles})
+        row = cur.fetchone()
+        if row is None:
+            return None
+        external_id, title, source_name, document_name, publisher_version = row
+        return {
+            "external_id": external_id,
+            "title": title,
             "source_name": source_name,
             "document_name": document_name,
             "publisher_version": publisher_version,
