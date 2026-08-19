@@ -1,6 +1,6 @@
 import pytest
 
-from invariant.assessment import assess_target
+from invariant.assessment import CHECKS, assess_target
 from invariant.assessment.facts import collect_facts
 
 pytestmark = pytest.mark.integration
@@ -23,13 +23,13 @@ def test_collect_facts_reads_real_ubuntu_container():
 
 
 def _assert_all_pass_except(findings, failing_external_id):
-    """5 checks run per target now (not 2) -- rather than hardcode every
+    """10 checks run per target now (not 2) -- rather than hardcode every
     external_id (they drift per document, e.g. Debian 13 uses 5.1.21 where
     the rest use 5.1.20), just assert the demo's "one problem per machine"
     story: exactly one FAIL, everything else PASS.
     """
     statuses = {f.external_id: f.status for f in findings}
-    assert len(statuses) == 5
+    assert len(statuses) == len(CHECKS)
     assert statuses[failing_external_id] == "FAIL"
     assert all(status == "PASS" for eid, status in statuses.items() if eid != failing_external_id)
 
@@ -37,7 +37,7 @@ def _assert_all_pass_except(findings, failing_external_id):
 def test_assess_debian_baseline_passes_all_controls():
     findings = assess_target("invariant-debian-baseline")
 
-    assert len(findings) == 5
+    assert len(findings) == len(CHECKS)
     assert all(f.status == "PASS" for f in findings)
 
 
@@ -56,7 +56,7 @@ def test_assess_debian_permissions_bad_fails_only_shadow_control():
 def test_assess_ubuntu_baseline_passes_all_controls():
     findings = assess_target("invariant-ubuntu-baseline")
 
-    assert len(findings) == 5
+    assert len(findings) == len(CHECKS)
     assert all(f.status == "PASS" for f in findings)
 
 
