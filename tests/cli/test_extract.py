@@ -9,14 +9,37 @@ from invariant.extractor import ExtractedRecommendation
 
 def test_latest_raw_artifact_metadata_picks_most_recent(tmp_path, monkeypatch):
     monkeypatch.setattr(extract_module, "DEFAULT_RAW_DIR", tmp_path)
-    older = {"source": "cis", "document": "debian_linux_10", "path": "older.pdf"}
-    newer = {"source": "cis", "document": "debian_linux_10", "path": "newer.pdf"}
+    older = {
+        "source": "cis", "document": "debian_linux_10", "path": "older.pdf",
+        "retrieved_at": "2026-01-01T00:00:00+00:00",
+    }
+    newer = {
+        "source": "cis", "document": "debian_linux_10", "path": "newer.pdf",
+        "retrieved_at": "2026-02-01T00:00:00+00:00",
+    }
     (tmp_path / "cis_debian_linux_10_1.0.0_aaa.json").write_text(json.dumps(older))
     (tmp_path / "cis_debian_linux_10_1.0.0_zzz.json").write_text(json.dumps(newer))
 
     metadata = extract_module._latest_raw_artifact_metadata(source="cis", document="debian_linux_10")
 
     assert metadata["path"] == "newer.pdf"
+
+
+def test_latest_raw_artifact_metadata_does_not_match_by_filename_prefix(tmp_path, monkeypatch):
+    """debian_linux_11 is a strict filename prefix of debian_linux_11_stig
+    -- regression test for a real bug where glob("*debian_linux_11*")
+    silently picked up the STIG artifact instead of raising/returning
+    nothing for a document that was never actually fetched.
+    """
+    monkeypatch.setattr(extract_module, "DEFAULT_RAW_DIR", tmp_path)
+    stig = {
+        "source": "cis", "document": "debian_linux_11_stig", "path": "stig.pdf",
+        "retrieved_at": "2026-01-01T00:00:00+00:00",
+    }
+    (tmp_path / "cis_debian_linux_11_stig_1.0.0_aaa.json").write_text(json.dumps(stig))
+
+    with pytest.raises(FileNotFoundError):
+        extract_module._latest_raw_artifact_metadata(source="cis", document="debian_linux_11")
 
 
 def test_latest_raw_artifact_metadata_raises_when_missing(tmp_path, monkeypatch):

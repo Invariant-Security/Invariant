@@ -3,7 +3,11 @@
 import re
 from dataclasses import dataclass
 
-_PROFILE_RE = re.compile(r"^Level\s+(?P<level>\d+)\s*-\s*(?P<applies_to>.+)$")
+# "-" is a plain hyphen (U+002D); the CIS Debian 11 STIG benchmark mixes
+# that with an en dash (U+2013) for the same "Level N <dash> X" pattern --
+# confirmed by running this against all 7 downloaded PDFs, only that one
+# document has this inconsistency (it even mixes both within itself).
+_PROFILE_RE = re.compile(r"^Level\s+(?P<level>\d+)\s*[-–]\s*(?P<applies_to>.+)$")
 
 # CIS benchmark PDFs are Word exports that render bullet points as either
 # a Wingdings-style glyph (private-use-area U+F0B7, older documents) or a

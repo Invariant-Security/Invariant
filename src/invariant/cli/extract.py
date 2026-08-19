@@ -62,11 +62,17 @@ def extract(document: str):
 
 
 def _latest_raw_artifact_metadata(*, source: str, document: str) -> dict:
-    pattern = str(DEFAULT_RAW_DIR / f"{source}_{document}_*.json")
-    matches = sorted(glob.glob(pattern))
+    # Filename-prefix globbing isn't safe here: "debian_linux_11" is a
+    # strict prefix of "debian_linux_11_stig"'s filename, so a glob like
+    # "cis_debian_linux_11_*.json" also matches the STIG one (confirmed:
+    # this silently returned the wrong artifact until fixed). Glob broadly,
+    # then filter on each file's own recorded `source`/`document` fields.
+    pattern = str(DEFAULT_RAW_DIR / f"{source}_*.json")
+    candidates = [json.loads(Path(path).read_text()) for path in sorted(glob.glob(pattern))]
+    matches = [m for m in candidates if m["source"] == source and m["document"] == document]
     if not matches:
         raise FileNotFoundError(
             f"no raw artifact metadata found for {source}/{document} in {DEFAULT_RAW_DIR} "
             f"-- run `invariant fetch` for it first"
         )
-    return json.loads(Path(matches[-1]).read_text())
+    return max(matches, key=lambda m: m["retrieved_at"])

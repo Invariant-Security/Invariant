@@ -46,3 +46,15 @@ def test_normalize_keeps_scored_and_core_fields():
 def test_normalize_rejects_unrecognized_profile_applicability_entry():
     with pytest.raises(ValueError):
         _normalize(profile_applicability=["Not a real level string"])
+
+
+def test_normalize_accepts_en_dash_in_profile_applicability():
+    """CIS Debian 11 STIG mixes a plain hyphen and an en dash (U+2013) for
+    the same "Level N <dash> X" pattern -- confirmed against the real PDF.
+    """
+    control = _normalize(profile_applicability=["Level 1 – Server", "Level 2 - Workstation"])
+
+    assert control.applicability == [
+        ProfileLevel(level=1, applies_to="Server"),
+        ProfileLevel(level=2, applies_to="Workstation"),
+    ]
