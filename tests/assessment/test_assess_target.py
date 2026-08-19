@@ -1,22 +1,25 @@
 import pytest
 
-from invariant.assessment import assess_target, detect_os
+from invariant.assessment import assess_target
+from invariant.assessment.facts import collect_facts
 
 pytestmark = pytest.mark.integration
 
 
-def test_detect_os_reads_real_debian_container():
-    os_info = detect_os("invariant-debian-baseline")
+def test_collect_facts_reads_real_debian_container():
+    facts = collect_facts("invariant-debian-baseline")
 
-    assert os_info["ID"] == "debian"
-    assert os_info["VERSION_ID"] == "11"
+    assert facts.os_id == "debian"
+    assert facts.os_version_id == "11"
+    assert facts.sshd_config["permitrootlogin"] == "no"
+    assert facts.file_stats["/etc/shadow"].mode == 0o640
 
 
-def test_detect_os_reads_real_ubuntu_container():
-    os_info = detect_os("invariant-ubuntu-baseline")
+def test_collect_facts_reads_real_ubuntu_container():
+    facts = collect_facts("invariant-ubuntu-baseline")
 
-    assert os_info["ID"] == "ubuntu"
-    assert os_info["VERSION_ID"] == "20.04"
+    assert facts.os_id == "ubuntu"
+    assert facts.os_version_id == "20.04"
 
 
 def test_assess_debian_baseline_passes_both_controls():
