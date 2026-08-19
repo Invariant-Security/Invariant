@@ -11,13 +11,16 @@ comparisons against that snapshot, not their own command. No agent
 installed on the target.
 
 Which CIS document applies to a target is *detected* from the collected
-facts, not hardcoded. Only two controls are actually implemented (SSH root
-login, /etc/shadow permissions) -- checking the rest of a document's ~300
+facts, not hardcoded. Only 5 controls are actually implemented so far (SSH
+PermitRootLogin/PermitUserEnvironment/IgnoreRhosts/LoginGraceTime,
+/etc/shadow permissions) -- checking the rest of a document's ~300
 controls needs a hand-written evaluator per control, the same way these
-two were built; there's no generic way to turn CIS's free-text audit
-instructions into an executable check (though ~81% of controls in the
-database have an extractable "# <command>" audit line -- a candidate for
-a future check-suggestion tool, not built yet).
+were built; there's no generic way to turn CIS's free-text audit
+instructions into an executable check. suggestions.suggest_checks()
+narrows down which controls are worth looking at next (591 distinct
+titles across the database have a single extractable "# <command>" audit
+line) but still only proposes -- every candidate needs a human to verify
+it against a real target before it becomes a real Check here.
 """
 
 from dataclasses import dataclass
@@ -64,6 +67,38 @@ def _evidence_shadow_permissions(facts: SystemFacts) -> str:
     return f"/etc/shadow: mode={oct(stat.mode)} uid={stat.uid} gid={stat.gid}({stat.gname})"
 
 
+def _evaluate_ssh_permit_user_environment(facts: SystemFacts) -> bool:
+    return facts.sshd_config.get("permituserenvironment", "").lower() == "no"
+
+
+def _evidence_ssh_permit_user_environment(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("permituserenvironment", "<not set>")
+    return f"sshd_config: PermitUserEnvironment {value}"
+
+
+def _evaluate_ssh_ignore_rhosts(facts: SystemFacts) -> bool:
+    return facts.sshd_config.get("ignorerhosts", "").lower() == "yes"
+
+
+def _evidence_ssh_ignore_rhosts(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("ignorerhosts", "<not set>")
+    return f"sshd_config: IgnoreRhosts {value}"
+
+
+def _evaluate_ssh_login_grace_time(facts: SystemFacts) -> bool:
+    value = facts.sshd_config.get("logingracetime", "")
+    try:
+        seconds = int(value)
+    except ValueError:
+        return False
+    return 1 <= seconds <= 60
+
+
+def _evidence_ssh_login_grace_time(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("logingracetime", "<not set>")
+    return f"sshd_config: LoginGraceTime {value}"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -80,7 +115,7 @@ class Check:
     evidence: Callable[[SystemFacts], str]
 
 
-# The only two controls Invariant actually knows how to check right now.
+# The only controls Invariant actually knows how to check right now.
 # Adding another means writing its evaluate()/evidence() by hand, the same
 # way these were -- extending facts.SystemFacts first if it needs a new
 # kind of collected data.
@@ -97,6 +132,21 @@ CHECKS = [
         ],
         evaluate=_evaluate_shadow_permissions,
         evidence=_evidence_shadow_permissions,
+    ),
+    Check(
+        titles=["Ensure sshd PermitUserEnvironment is disabled"],
+        evaluate=_evaluate_ssh_permit_user_environment,
+        evidence=_evidence_ssh_permit_user_environment,
+    ),
+    Check(
+        titles=["Ensure sshd IgnoreRhosts is enabled"],
+        evaluate=_evaluate_ssh_ignore_rhosts,
+        evidence=_evidence_ssh_ignore_rhosts,
+    ),
+    Check(
+        titles=["Ensure sshd LoginGraceTime is configured"],
+        evaluate=_evaluate_ssh_login_grace_time,
+        evidence=_evidence_ssh_login_grace_time,
     ),
 ]
 

@@ -21,6 +21,13 @@ _MARKER_STAT_PREFIX = "===STAT:"
 
 
 def _collect_script() -> str:
+    # `sshd -T` (not `cat /etc/ssh/sshd_config`) on purpose: it prints the
+    # *effective* config -- every directive, including ones left at their
+    # OpenSSH default because the config file never sets them explicitly
+    # (confirmed: our own demo containers never set IgnoreRhosts, but
+    # `sshd -T` still correctly reports its secure default, "yes"; parsing
+    # the raw file would have missed it entirely and looked unset). This
+    # is also literally what CIS's own audit commands run.
     stat_commands = "\n".join(
         f"echo '{_MARKER_STAT_PREFIX}{path}==='; "
         f"stat -Lc 'mode=%a uid=%u gid=%g gname=%G' {path} 2>&1"
@@ -28,7 +35,7 @@ def _collect_script() -> str:
     )
     return (
         f"echo '{_MARKER_OS_RELEASE}'; cat /etc/os-release 2>&1; "
-        f"echo '{_MARKER_SSHD_CONFIG}'; cat /etc/ssh/sshd_config 2>&1; "
+        f"echo '{_MARKER_SSHD_CONFIG}'; sshd -T 2>&1; "
         f"{stat_commands}"
     )
 
@@ -60,10 +67,11 @@ def _parse_os_release(text: str) -> dict[str, str]:
 
 
 def parse_sshd_config(text: str) -> dict[str, str]:
-    """OpenSSH directives are case-insensitive and "Directive value" per
-    line; comments start with '#', blank lines are skipped. Later lines
-    win on conflict -- matches how sshd itself resolves duplicates enough
-    for our purposes (we only ever append one override line per Dockerfile).
+    """Parses "directive value" lines -- works on `sshd -T`'s effective-
+    config output (what _collect_script() actually feeds it: already
+    lowercase, one directive per line, defaults included) and on a raw
+    sshd_config file just as well (comments/blank lines skipped). Later
+    lines win on conflict.
     """
     directives = {}
     for line in text.splitlines():
