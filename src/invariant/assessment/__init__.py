@@ -99,6 +99,109 @@ def _evidence_ssh_login_grace_time(facts: SystemFacts) -> str:
     return f"sshd_config: LoginGraceTime {value}"
 
 
+def _permissions_ok(
+    facts: SystemFacts, path: str, max_mode: int, allowed_gnames: tuple[str, ...]
+) -> bool:
+    """Shared by every plain file-permission check below (Group A: /etc/issue,
+    /etc/passwd(-), /etc/group(-), /etc/shadow-, /etc/gshadow(-), /etc/shells,
+    /etc/ssh/sshd_config) -- their real CIS audit text is otherwise a copy of
+    the /etc/shadow one already implemented above (stat mode <= a ceiling,
+    Uid 0/root, Gid 0/root or a specific group), just with a different
+    path/mode/allowed group.
+    """
+    stat = facts.file_stats.get(path)
+    if stat is None or stat.mode is None:
+        return False
+    return stat.mode <= max_mode and stat.uid == 0 and stat.gname in allowed_gnames
+
+
+def _evidence_for_stat(path: str) -> Callable[[SystemFacts], str]:
+    def _evidence(facts: SystemFacts) -> str:
+        stat = facts.file_stats.get(path)
+        if stat is None or stat.mode is None:
+            return f"{path}: could not stat"
+        return f"{path}: mode={oct(stat.mode)} uid={stat.uid} gid={stat.gid}({stat.gname})"
+
+    return _evidence
+
+
+def _evaluate_etc_issue_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/issue", 0o644, ("root",))
+
+
+_evidence_etc_issue_permissions = _evidence_for_stat("/etc/issue")
+
+
+def _evaluate_etc_issue_net_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/issue.net", 0o644, ("root",))
+
+
+_evidence_etc_issue_net_permissions = _evidence_for_stat("/etc/issue.net")
+
+
+def _evaluate_etc_passwd_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/passwd", 0o644, ("root",))
+
+
+_evidence_etc_passwd_permissions = _evidence_for_stat("/etc/passwd")
+
+
+def _evaluate_etc_passwd_minus_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/passwd-", 0o644, ("root",))
+
+
+_evidence_etc_passwd_minus_permissions = _evidence_for_stat("/etc/passwd-")
+
+
+def _evaluate_etc_group_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/group", 0o644, ("root",))
+
+
+_evidence_etc_group_permissions = _evidence_for_stat("/etc/group")
+
+
+def _evaluate_etc_group_minus_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/group-", 0o644, ("root",))
+
+
+_evidence_etc_group_minus_permissions = _evidence_for_stat("/etc/group-")
+
+
+def _evaluate_etc_shadow_minus_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/shadow-", 0o640, ("root", "shadow"))
+
+
+_evidence_etc_shadow_minus_permissions = _evidence_for_stat("/etc/shadow-")
+
+
+def _evaluate_etc_gshadow_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/gshadow", 0o640, ("root", "shadow"))
+
+
+_evidence_etc_gshadow_permissions = _evidence_for_stat("/etc/gshadow")
+
+
+def _evaluate_etc_gshadow_minus_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/gshadow-", 0o640, ("root", "shadow"))
+
+
+_evidence_etc_gshadow_minus_permissions = _evidence_for_stat("/etc/gshadow-")
+
+
+def _evaluate_etc_shells_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/shells", 0o644, ("root",))
+
+
+_evidence_etc_shells_permissions = _evidence_for_stat("/etc/shells")
+
+
+def _evaluate_sshd_config_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/ssh/sshd_config", 0o600, ("root",))
+
+
+_evidence_sshd_config_permissions = _evidence_for_stat("/etc/ssh/sshd_config")
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -147,6 +250,102 @@ CHECKS = [
         titles=["Ensure sshd LoginGraceTime is configured"],
         evaluate=_evaluate_ssh_login_grace_time,
         evidence=_evidence_ssh_login_grace_time,
+    ),
+    # Group A: plain file-permission checks. Title wording drifts the same
+    # way it does for /etc/shadow -- confirmed across debian_linux_11/12/13
+    # and ubuntu_linux_20_04/22_04/24_04 (our 6 demo targets' documents):
+    # debian_linux_11 always uses "Ensure permissions on X are configured",
+    # every other target document uses "Ensure access to X is configured".
+    # Both wordings are the same control (identical audit text), so both
+    # are listed. hosts.allow/hosts.deny permission controls were looked at
+    # and dropped -- see module docstring notes below the CHECKS list.
+    Check(
+        titles=[
+            "Ensure access to /etc/issue is configured",
+            "Ensure permissions on /etc/issue are configured",
+        ],
+        evaluate=_evaluate_etc_issue_permissions,
+        evidence=_evidence_etc_issue_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/issue.net is configured",
+            "Ensure permissions on /etc/issue.net are configured",
+        ],
+        evaluate=_evaluate_etc_issue_net_permissions,
+        evidence=_evidence_etc_issue_net_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/passwd is configured",
+            "Ensure permissions on /etc/passwd are configured",
+        ],
+        evaluate=_evaluate_etc_passwd_permissions,
+        evidence=_evidence_etc_passwd_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/passwd- is configured",
+            "Ensure permissions on /etc/passwd- are configured",
+        ],
+        evaluate=_evaluate_etc_passwd_minus_permissions,
+        evidence=_evidence_etc_passwd_minus_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/group is configured",
+            "Ensure permissions on /etc/group are configured",
+        ],
+        evaluate=_evaluate_etc_group_permissions,
+        evidence=_evidence_etc_group_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/group- is configured",
+            "Ensure permissions on /etc/group- are configured",
+        ],
+        evaluate=_evaluate_etc_group_minus_permissions,
+        evidence=_evidence_etc_group_minus_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/shadow- is configured",
+            "Ensure permissions on /etc/shadow- are configured",
+        ],
+        evaluate=_evaluate_etc_shadow_minus_permissions,
+        evidence=_evidence_etc_shadow_minus_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/gshadow is configured",
+            "Ensure permissions on /etc/gshadow are configured",
+        ],
+        evaluate=_evaluate_etc_gshadow_permissions,
+        evidence=_evidence_etc_gshadow_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/gshadow- is configured",
+            "Ensure permissions on /etc/gshadow- are configured",
+        ],
+        evaluate=_evaluate_etc_gshadow_minus_permissions,
+        evidence=_evidence_etc_gshadow_minus_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/shells is configured",
+            "Ensure permissions on /etc/shells are configured",
+        ],
+        evaluate=_evaluate_etc_shells_permissions,
+        evidence=_evidence_etc_shells_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/ssh/sshd_config is configured",
+            "Ensure permissions on /etc/ssh/sshd_config are configured",
+        ],
+        evaluate=_evaluate_sshd_config_permissions,
+        evidence=_evidence_sshd_config_permissions,
     ),
 ]
 

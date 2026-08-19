@@ -22,54 +22,67 @@ def test_collect_facts_reads_real_ubuntu_container():
     assert facts.os_version_id == "20.04"
 
 
-def _assert_all_pass_except(findings, failing_external_id):
-    """5 checks run per target now (not 2) -- rather than hardcode every
+def _assert_fails_only(findings, expected_failing_ids):
+    """16 checks run per target now (not 5) -- rather than hardcode every
     external_id (they drift per document, e.g. Debian 13 uses 5.1.21 where
-    the rest use 5.1.20), just assert the demo's "one problem per machine"
-    story: exactly one FAIL, everything else PASS.
+    the rest use 5.1.20), assert the demo's "known problems per machine"
+    story: exactly the given set of FAILs, everything else PASS.
+
+    Every target -- including both "baseline" containers -- now includes
+    "5.1.1 Ensure access/permissions to/on /etc/ssh/sshd_config is/are
+    configured" in its expected failures. Confirmed against all 6 live
+    containers: this is a real, systemic gap in the demo infra (none of the
+    6 Dockerfiles ever hardened sshd_config's mode -- openssh-server's
+    packaged default is 644, CIS requires 600 or more restrictive), not a
+    bug in the check. Left as-is rather than editing the shared Dockerfiles
+    while other agents are actively using these same live containers in
+    parallel -- worth a follow-up to harden the images.
     """
     statuses = {f.external_id: f.status for f in findings}
-    assert len(statuses) == 5
-    assert statuses[failing_external_id] == "FAIL"
-    assert all(status == "PASS" for eid, status in statuses.items() if eid != failing_external_id)
+    assert len(statuses) == 16
+    for external_id in expected_failing_ids:
+        assert statuses[external_id] == "FAIL", f"expected {external_id} to FAIL, got {statuses[external_id]}"
+    assert all(
+        status == "PASS" for eid, status in statuses.items() if eid not in expected_failing_ids
+    )
 
 
-def test_assess_debian_baseline_passes_all_controls():
+def test_assess_debian_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-debian-baseline")
 
-    assert len(findings) == 5
-    assert all(f.status == "PASS" for f in findings)
+    assert len(findings) == 16
+    _assert_fails_only(findings, {"5.1.1"})
 
 
-def test_assess_debian_ssh_bad_fails_only_ssh_control():
+def test_assess_debian_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
     findings = assess_target("invariant-debian-ssh-bad")
 
-    _assert_all_pass_except(findings, "5.1.20")
+    _assert_fails_only(findings, {"5.1.20", "5.1.1"})
 
 
-def test_assess_debian_permissions_bad_fails_only_shadow_control():
+def test_assess_debian_permissions_bad_fails_only_shadow_and_sshd_config_permissions():
     findings = assess_target("invariant-debian-permissions-bad")
 
-    _assert_all_pass_except(findings, "7.1.5")
+    _assert_fails_only(findings, {"7.1.5", "5.1.1"})
 
 
-def test_assess_ubuntu_baseline_passes_all_controls():
+def test_assess_ubuntu_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-baseline")
 
-    assert len(findings) == 5
-    assert all(f.status == "PASS" for f in findings)
+    assert len(findings) == 16
+    _assert_fails_only(findings, {"5.1.1"})
 
 
-def test_assess_ubuntu_ssh_bad_fails_only_ssh_control():
+def test_assess_ubuntu_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-ssh-bad")
 
-    _assert_all_pass_except(findings, "5.1.20")
+    _assert_fails_only(findings, {"5.1.20", "5.1.1"})
 
 
-def test_assess_ubuntu_permissions_bad_fails_only_shadow_control():
+def test_assess_ubuntu_permissions_bad_fails_only_shadow_and_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-permissions-bad")
 
-    _assert_all_pass_except(findings, "7.1.5")
+    _assert_fails_only(findings, {"7.1.5", "5.1.1"})
 
 
 def test_assess_finding_carries_full_traceability_chain():
