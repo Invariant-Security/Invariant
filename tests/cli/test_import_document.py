@@ -67,6 +67,7 @@ def test_import_document_wires_extracted_items_into_normalizer_and_storage(monke
     assert upserted["normalized_data"] == {
         "scored": True,
         "applicability": [{"level": 1, "applies_to": "Server"}],
+        "applicability_tags": [],
         "rationale": "rationale",
         "audit": "audit",
         "remediation": "remediation",

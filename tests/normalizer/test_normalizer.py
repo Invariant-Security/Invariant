@@ -1,5 +1,3 @@
-import pytest
-
 from invariant.normalizer import ProfileLevel, normalize
 
 
@@ -43,9 +41,16 @@ def test_normalize_keeps_scored_and_core_fields():
     assert control.external_id == "1.2.3"
 
 
-def test_normalize_rejects_unrecognized_profile_applicability_entry():
-    with pytest.raises(ValueError):
-        _normalize(profile_applicability=["Not a real level string"])
+def test_normalize_keeps_non_level_entries_as_applicability_tags():
+    """CIS Debian 11 STIG tags some recommendations with a bare "STIG"
+    marker (no level number) alongside the normal "Level N - X" entries --
+    confirmed against the real PDF. Not an error, just a different kind
+    of tag; don't fabricate a fake level number for it.
+    """
+    control = _normalize(profile_applicability=["Level 1 - Server", "STIG"])
+
+    assert control.applicability == [ProfileLevel(level=1, applies_to="Server")]
+    assert control.applicability_tags == ["STIG"]
 
 
 def test_normalize_accepts_en_dash_in_profile_applicability():
