@@ -38,6 +38,21 @@ O projeto utiliza ferramentas robustas com foco em performance e aprendizado pro
 
 ---
 
+## 📏 Padrão de Código
+
+O projeto segue [PEP 8](https://peps.python.org/pep-0008/), o guia de estilo oficial do Python, como fundação de nomenclatura e estilo:
+
+- Módulos, pacotes, funções e variáveis: `snake_case`.
+- Classes: `PascalCase`.
+- Constantes: `UPPER_SNAKE_CASE`.
+
+Essa convenção vale para o repositório inteiro, não só para arquivos `.py` (ex: nomes de arquivos dentro de `docs/`) — a única exceção é quando uma ferramenta específica exige um nome fixo diferente. Exemplos já presentes neste repositório:
+
+- `README.md`, `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md` — nomes reconhecidos pelo próprio GitHub (community health files) para render automático na UI.
+- `Makefile`, `pyproject.toml` — nomes exigidos literalmente pelas ferramentas (`make`, `pip`/`hatchling`).
+
+---
+
 ## 🗺️ Roadmap e Milestones
 
 O desenvolvimento é incremental, garantindo a maturidade da camada de dados antes da construção do Assessment Engine (scanner):
