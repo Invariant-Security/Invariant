@@ -1,6 +1,7 @@
 import pytest
 
 from invariant.assessment import (
+    _evaluate_default_umask,
     _evaluate_etc_group_minus_permissions,
     _evaluate_etc_group_permissions,
     _evaluate_etc_gshadow_minus_permissions,
@@ -12,6 +13,10 @@ from invariant.assessment import (
     _evaluate_etc_shadow_minus_permissions,
     _evaluate_etc_shells_permissions,
     _evaluate_only_root_group_has_gid0,
+    _evaluate_pam_faillock_enabled,
+    _evaluate_pam_no_nullok,
+    _evaluate_pam_pwhistory_enabled,
+    _evaluate_pam_pwquality_enabled,
     _evaluate_passwd_accounts_use_shadowed_passwords,
     _evaluate_root_only_gid0_account,
     _evaluate_root_only_uid0_account,
@@ -33,6 +38,10 @@ def _facts(
     passwd_text="",
     group_text="",
     shadow_text="",
+    pam_common_auth="",
+    pam_common_password="",
+    pam_common_account="",
+    login_defs_text="",
 ) -> SystemFacts:
     stats = dict(file_stats or {})
     if shadow_stat:
@@ -45,6 +54,10 @@ def _facts(
         passwd_text=passwd_text,
         group_text=group_text,
         shadow_text=shadow_text,
+        pam_common_auth=pam_common_auth,
+        pam_common_password=pam_common_password,
+        pam_common_account=pam_common_account,
+        login_defs_text=login_defs_text,
     )
 
 
@@ -335,3 +348,102 @@ def test_only_root_group_has_gid0_evaluator_passes():
 def test_only_root_group_has_gid0_evaluator_fails_when_another_group_has_gid0():
     facts = _facts(group_text="root:x:0:\ndaemon:x:0:")
     assert _evaluate_only_root_group_has_gid0(facts) is False
+
+
+def test_faillock_evaluator_passes_when_present_in_both_files():
+    facts = _facts(
+        pam_common_auth="auth requisite pam_faillock.so preauth",
+        pam_common_account="account required pam_faillock.so",
+    )
+    assert _evaluate_pam_faillock_enabled(facts) is True
+
+
+def test_faillock_evaluator_fails_when_missing_from_auth():
+    facts = _facts(
+        pam_common_auth="auth [success=1 default=ignore] pam_unix.so",
+        pam_common_account="account required pam_faillock.so",
+    )
+    assert _evaluate_pam_faillock_enabled(facts) is False
+
+
+def test_faillock_evaluator_fails_when_missing_from_account():
+    facts = _facts(
+        pam_common_auth="auth requisite pam_faillock.so preauth",
+        pam_common_account="account [success=1 default=ignore] pam_unix.so",
+    )
+    assert _evaluate_pam_faillock_enabled(facts) is False
+
+
+def test_faillock_evaluator_fails_when_missing_entirely():
+    assert _evaluate_pam_faillock_enabled(_facts()) is False
+
+
+def test_pwquality_evaluator_passes_when_present():
+    facts = _facts(pam_common_password="password requisite pam_pwquality.so retry=3")
+    assert _evaluate_pam_pwquality_enabled(facts) is True
+
+
+def test_pwquality_evaluator_fails_when_missing():
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so")
+    assert _evaluate_pam_pwquality_enabled(facts) is False
+
+
+def test_pwhistory_evaluator_passes_when_present():
+    facts = _facts(pam_common_password="password requisite pam_pwhistory.so remember=24")
+    assert _evaluate_pam_pwhistory_enabled(facts) is True
+
+
+def test_pwhistory_evaluator_fails_when_missing():
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so")
+    assert _evaluate_pam_pwhistory_enabled(facts) is False
+
+
+def test_no_nullok_evaluator_passes_when_absent():
+    facts = _facts(
+        pam_common_auth="auth [success=1 default=ignore] pam_unix.so",
+        pam_common_password="password [success=1 default=ignore] pam_unix.so obscure yescrypt",
+        pam_common_account="account [success=1 default=ignore] pam_unix.so",
+    )
+    assert _evaluate_pam_no_nullok(facts) is True
+
+
+def test_no_nullok_evaluator_fails_when_present_in_auth():
+    facts = _facts(pam_common_auth="auth [success=1 default=ignore] pam_unix.so nullok")
+    assert _evaluate_pam_no_nullok(facts) is False
+
+
+def test_no_nullok_evaluator_fails_when_present_in_password():
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so nullok")
+    assert _evaluate_pam_no_nullok(facts) is False
+
+
+def test_no_nullok_evaluator_ignores_nullok_on_unrelated_module():
+    """Only a nullok argument on the pam_unix.so line itself is a finding --
+    e.g. a comment mentioning "nullok" elsewhere on the same file shouldn't
+    trip the check for a different module's line."""
+    facts = _facts(pam_common_auth="auth requisite pam_faillock.so preauth\n# nullok is dangerous")
+    assert _evaluate_pam_no_nullok(facts) is True
+
+
+def test_default_umask_evaluator_passes_at_027():
+    facts = _facts(login_defs_text="UMASK\t\t027")
+    assert _evaluate_default_umask(facts) is True
+
+
+def test_default_umask_evaluator_passes_at_more_restrictive_than_027():
+    facts = _facts(login_defs_text="UMASK\t\t077")
+    assert _evaluate_default_umask(facts) is True
+
+
+def test_default_umask_evaluator_fails_at_022():
+    facts = _facts(login_defs_text="UMASK\t\t022")
+    assert _evaluate_default_umask(facts) is False
+
+
+def test_default_umask_evaluator_fails_when_missing():
+    assert _evaluate_default_umask(_facts()) is False
+
+
+def test_default_umask_evaluator_fails_on_non_octal_value():
+    facts = _facts(login_defs_text="UMASK\t\tnot-a-number")
+    assert _evaluate_default_umask(facts) is False
