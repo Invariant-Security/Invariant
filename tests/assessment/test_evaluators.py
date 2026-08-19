@@ -11,6 +11,11 @@ from invariant.assessment import (
     _evaluate_etc_passwd_permissions,
     _evaluate_etc_shadow_minus_permissions,
     _evaluate_etc_shells_permissions,
+    _evaluate_only_root_group_has_gid0,
+    _evaluate_passwd_accounts_use_shadowed_passwords,
+    _evaluate_root_only_gid0_account,
+    _evaluate_root_only_uid0_account,
+    _evaluate_shadow_password_fields_not_empty,
     _evaluate_shadow_permissions,
     _evaluate_ssh_ignore_rhosts,
     _evaluate_ssh_login_grace_time,
@@ -21,7 +26,14 @@ from invariant.assessment import (
 from invariant.assessment.facts import FileStat, SystemFacts
 
 
-def _facts(sshd_config=None, shadow_stat=None, file_stats=None) -> SystemFacts:
+def _facts(
+    sshd_config=None,
+    shadow_stat=None,
+    file_stats=None,
+    passwd_text="",
+    group_text="",
+    shadow_text="",
+) -> SystemFacts:
     stats = dict(file_stats or {})
     if shadow_stat:
         stats["/etc/shadow"] = shadow_stat
@@ -30,6 +42,9 @@ def _facts(sshd_config=None, shadow_stat=None, file_stats=None) -> SystemFacts:
         os_version_id="11",
         sshd_config=sshd_config or {},
         file_stats=stats,
+        passwd_text=passwd_text,
+        group_text=group_text,
+        shadow_text=shadow_text,
     )
 
 
@@ -231,3 +246,92 @@ def test_sshd_config_permissions_evaluator_fails_when_not_owned_by_root():
 
 def test_sshd_config_permissions_evaluator_fails_when_stat_missing():
     assert _evaluate_sshd_config_permissions(_facts()) is False
+
+
+# --- Ensure /etc/shadow password fields are not empty ---
+
+
+def test_shadow_password_fields_evaluator_passes_when_all_set():
+    facts = _facts(shadow_text="root:*:19000:0:99999:7:::\ndaemon:*:19000:0:99999:7:::")
+    assert _evaluate_shadow_password_fields_not_empty(facts) is True
+
+
+def test_shadow_password_fields_evaluator_fails_when_one_empty():
+    facts = _facts(shadow_text="root::19000:0:99999:7:::\ndaemon:*:19000:0:99999:7:::")
+    assert _evaluate_shadow_password_fields_not_empty(facts) is False
+
+
+def test_shadow_password_fields_evaluator_passes_on_empty_text():
+    """No lines to complain about is vacuously true -- an unreadable file
+    is a collection concern, not something this evaluator can detect from
+    text alone.
+    """
+    assert _evaluate_shadow_password_fields_not_empty(_facts()) is True
+
+
+# --- Ensure accounts in /etc/passwd use shadowed passwords ---
+
+
+def test_passwd_shadowed_evaluator_passes_when_all_x():
+    facts = _facts(passwd_text="root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1::/usr/sbin:/usr/sbin/nologin")
+    assert _evaluate_passwd_accounts_use_shadowed_passwords(facts) is True
+
+
+def test_passwd_shadowed_evaluator_fails_when_hash_inline():
+    facts = _facts(passwd_text="root:$6$fakehash$abc:0:0:root:/root:/bin/bash")
+    assert _evaluate_passwd_accounts_use_shadowed_passwords(facts) is False
+
+
+# --- Ensure root is the only GID 0 account (primary GID in /etc/passwd) ---
+
+
+def test_root_only_gid0_account_evaluator_passes():
+    facts = _facts(passwd_text="root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/bash")
+    assert _evaluate_root_only_gid0_account(facts) is True
+
+
+def test_root_only_gid0_account_evaluator_fails_when_another_account_has_gid0():
+    facts = _facts(passwd_text="root:x:0:0:root:/root:/bin/bash\nrogue:x:5000:0::/home/rogue:/bin/sh")
+    assert _evaluate_root_only_gid0_account(facts) is False
+
+
+def test_root_only_gid0_account_evaluator_excludes_known_system_accounts():
+    """CIS's own audit excludes sync/shutdown/halt/operator by name --
+    those legitimately carry primary GID 0 without being a finding.
+    """
+    facts = _facts(
+        passwd_text=(
+            "root:x:0:0:root:/root:/bin/bash\n"
+            "sync:x:4:0:sync:/bin:/bin/sync\n"
+            "shutdown:x:6:0:shutdown:/sbin:/sbin/shutdown\n"
+            "halt:x:7:0:halt:/sbin:/sbin/halt\n"
+            "operator:x:37:0:Operator:/var:/bin/sh"
+        )
+    )
+    assert _evaluate_root_only_gid0_account(facts) is True
+
+
+# --- Ensure root is the only UID 0 account ---
+
+
+def test_root_only_uid0_account_evaluator_passes():
+    facts = _facts(passwd_text="root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/bash")
+    assert _evaluate_root_only_uid0_account(facts) is True
+
+
+def test_root_only_uid0_account_evaluator_fails_when_another_account_has_uid0():
+    facts = _facts(passwd_text="root:x:0:0:root:/root:/bin/bash\ndaemon:x:0:1:daemon:/usr/sbin:/usr/sbin/nologin")
+    assert _evaluate_root_only_uid0_account(facts) is False
+
+
+# --- Ensure group root is the only GID 0 group ---
+
+
+def test_only_root_group_has_gid0_evaluator_passes():
+    facts = _facts(group_text="root:x:0:\ndaemon:x:1:")
+    assert _evaluate_only_root_group_has_gid0(facts) is True
+
+
+def test_only_root_group_has_gid0_evaluator_fails_when_another_group_has_gid0():
+    facts = _facts(group_text="root:x:0:\ndaemon:x:0:")
+    assert _evaluate_only_root_group_has_gid0(facts) is False

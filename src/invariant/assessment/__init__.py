@@ -202,6 +202,127 @@ def _evaluate_sshd_config_permissions(facts: SystemFacts) -> bool:
 _evidence_sshd_config_permissions = _evidence_for_stat("/etc/ssh/sshd_config")
 
 
+def _passwd_fields(passwd_text: str) -> list[list[str]]:
+    """Splits /etc/passwd-style text into colon-separated fields per
+    non-blank line. Lines that don't parse into enough fields (a `cat`
+    error message when the file couldn't be read, for instance) are
+    dropped rather than raising -- same "don't crash on unreadable input"
+    posture as facts.FileStat.mode being None.
+    """
+    rows = []
+    for line in passwd_text.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split(":")
+        if len(fields) < 4:
+            continue
+        rows.append(fields)
+    return rows
+
+
+def _evaluate_shadow_password_fields_not_empty(facts: SystemFacts) -> bool:
+    """Real audit (e.g. CIS Debian 12, control 7.2.1): `awk -F: '($2 == ""
+    ) {print $1}' /etc/shadow` must return nothing -- every account's
+    password field (colon field 2) must be set to something (a hash, or a
+    lock marker like `*`/`!`), never empty.
+    """
+    for fields in _passwd_fields(facts.shadow_text):
+        if fields[1] == "":
+            return False
+    return True
+
+
+def _evidence_shadow_password_fields_not_empty(facts: SystemFacts) -> str:
+    empty_users = [f[0] for f in _passwd_fields(facts.shadow_text) if f[1] == ""]
+    if empty_users:
+        return f"/etc/shadow: empty password field for: {', '.join(empty_users)}"
+    return "/etc/shadow: no empty password fields"
+
+
+def _evaluate_passwd_accounts_use_shadowed_passwords(facts: SystemFacts) -> bool:
+    """Real audit: `awk -F: '($2 != "x") {print $1}' /etc/passwd` must
+    return nothing -- every account's /etc/passwd password field (colon
+    field 2) must be the literal "x", meaning the real hash lives in
+    /etc/shadow instead of sitting in the world-readable passwd file.
+    """
+    for fields in _passwd_fields(facts.passwd_text):
+        if fields[1] != "x":
+            return False
+    return True
+
+
+def _evidence_passwd_accounts_use_shadowed_passwords(facts: SystemFacts) -> str:
+    not_shadowed = [f[0] for f in _passwd_fields(facts.passwd_text) if f[1] != "x"]
+    if not_shadowed:
+        return f"/etc/passwd: not using shadowed passwords: {', '.join(not_shadowed)}"
+    return "/etc/passwd: all accounts use shadowed passwords"
+
+
+_GID0_EXCLUDED_PREFIXES = ("sync", "shutdown", "halt", "operator")
+
+
+def _evaluate_root_only_gid0_account(facts: SystemFacts) -> bool:
+    """Real audit (CIS Debian 12/13, 7.2.5): `awk -F: '($1 !~
+    /^(sync|shutdown|halt|operator)/ && $4=="0") {print $1}' /etc/passwd`
+    must return only "root" -- no account other than root (and a handful
+    of system accounts the benchmark excludes by name) may have primary
+    GID 0.
+    """
+    gid0_accounts = [
+        fields[0]
+        for fields in _passwd_fields(facts.passwd_text)
+        if not fields[0].startswith(_GID0_EXCLUDED_PREFIXES) and fields[3] == "0"
+    ]
+    return gid0_accounts == ["root"]
+
+
+def _evidence_root_only_gid0_account(facts: SystemFacts) -> str:
+    gid0_accounts = [
+        fields[0]
+        for fields in _passwd_fields(facts.passwd_text)
+        if not fields[0].startswith(_GID0_EXCLUDED_PREFIXES) and fields[3] == "0"
+    ]
+    return f"/etc/passwd: (non-excluded) accounts with primary GID 0: {', '.join(gid0_accounts) or '<none>'}"
+
+
+def _evaluate_root_only_uid0_account(facts: SystemFacts) -> bool:
+    """Real audit: `awk -F: '($3 == 0) {print $1}' /etc/passwd` must
+    return only "root" -- no other account may have UID 0.
+    """
+    uid0_accounts = [fields[0] for fields in _passwd_fields(facts.passwd_text) if fields[2] == "0"]
+    return uid0_accounts == ["root"]
+
+
+def _evidence_root_only_uid0_account(facts: SystemFacts) -> str:
+    uid0_accounts = [fields[0] for fields in _passwd_fields(facts.passwd_text) if fields[2] == "0"]
+    return f"/etc/passwd: UID 0 accounts: {', '.join(uid0_accounts) or '<none>'}"
+
+
+def _group_fields(group_text: str) -> list[list[str]]:
+    rows = []
+    for line in group_text.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split(":")
+        if len(fields) < 3:
+            continue
+        rows.append(fields)
+    return rows
+
+
+def _evaluate_only_root_group_has_gid0(facts: SystemFacts) -> bool:
+    """Real audit: `awk -F: '$3=="0"{print $1}' /etc/group` must return
+    only "root" -- no group other than root may be assigned GID 0.
+    """
+    gid0_groups = [fields[0] for fields in _group_fields(facts.group_text) if fields[2] == "0"]
+    return gid0_groups == ["root"]
+
+
+def _evidence_only_root_group_has_gid0(facts: SystemFacts) -> str:
+    gid0_groups = [fields[0] for fields in _group_fields(facts.group_text) if fields[2] == "0"]
+    return f"/etc/group: GID 0 assigned to: {', '.join(gid0_groups) or '<none>'}"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -346,6 +467,42 @@ CHECKS = [
         ],
         evaluate=_evaluate_sshd_config_permissions,
         evidence=_evidence_sshd_config_permissions,
+    ),
+    # Group B: passwd/group/shadow content checks.
+    Check(
+        titles=[
+            "Ensure /etc/shadow password fields are not empty",
+            "Ensure password fields are not empty",
+            "Ensure Password Fields are Not Empty",
+        ],
+        evaluate=_evaluate_shadow_password_fields_not_empty,
+        evidence=_evidence_shadow_password_fields_not_empty,
+    ),
+    Check(
+        titles=["Ensure accounts in /etc/passwd use shadowed passwords"],
+        evaluate=_evaluate_passwd_accounts_use_shadowed_passwords,
+        evidence=_evidence_passwd_accounts_use_shadowed_passwords,
+    ),
+    Check(
+        titles=["Ensure root is the only GID 0 account"],
+        evaluate=_evaluate_root_only_gid0_account,
+        evidence=_evidence_root_only_gid0_account,
+    ),
+    Check(
+        titles=[
+            "Ensure root is the only UID 0 account",
+            "Verify No UID 0 Accounts Exist Other Than root",
+            "Configure root and system accounts and environment Page 637 Internal Only - General 5.4.2.1 Ensure root is the only UID 0 account",
+            "Configure root and system accounts and environment Page 671  5.4.2.1 Ensure root is the only UID 0 account",
+            "Configure root and system accounts and environment Page 677 Internal Only - General 5.4.2.1 Ensure root is the only UID 0 account",
+        ],
+        evaluate=_evaluate_root_only_uid0_account,
+        evidence=_evidence_root_only_uid0_account,
+    ),
+    Check(
+        titles=["Ensure group root is the only GID 0 group"],
+        evaluate=_evaluate_only_root_group_has_gid0,
+        evidence=_evidence_only_root_group_has_gid0,
     ),
 ]
 
