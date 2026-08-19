@@ -16,6 +16,9 @@ _UPSERT_SOURCE = (_QUERIES_DIR / "upsert_source.sql").read_text()
 _UPSERT_DOCUMENT = (_QUERIES_DIR / "upsert_document.sql").read_text()
 _UPSERT_DOCUMENT_VERSION = (_QUERIES_DIR / "upsert_document_version.sql").read_text()
 _UPSERT_EXTRACTED_ITEM = (_QUERIES_DIR / "upsert_extracted_item.sql").read_text()
+_UPSERT_CONTROL = (_QUERIES_DIR / "upsert_control.sql").read_text()
+_SELECT_LATEST_DOCUMENT_VERSION_ID = (_QUERIES_DIR / "select_latest_document_version_id.sql").read_text()
+_SELECT_EXTRACTED_ITEMS = (_QUERIES_DIR / "select_extracted_items.sql").read_text()
 
 
 def connect() -> psycopg.Connection:
@@ -89,3 +92,44 @@ def upsert_extracted_item(
             },
         )
         return cur.fetchone()[0]
+
+
+def upsert_control(
+    conn: psycopg.Connection,
+    *,
+    document_version_id: int,
+    external_id: str,
+    title: str,
+    description: str | None,
+    category: str | None,
+    normalized_data: dict,
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            _UPSERT_CONTROL,
+            {
+                "document_version_id": document_version_id,
+                "external_id": external_id,
+                "title": title,
+                "description": description,
+                "category": category,
+                "normalized_data": Jsonb(normalized_data),
+            },
+        )
+        return cur.fetchone()[0]
+
+
+def select_latest_document_version_id(conn: psycopg.Connection, *, source: str, document: str) -> int | None:
+    with conn.cursor() as cur:
+        cur.execute(_SELECT_LATEST_DOCUMENT_VERSION_ID, {"source": source, "document": document})
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def select_extracted_items(conn: psycopg.Connection, *, document_version_id: int) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(_SELECT_EXTRACTED_ITEMS, {"document_version_id": document_version_id})
+        return [
+            {"external_id": external_id, "title": title, "description": description, "raw_data": raw_data}
+            for external_id, title, description, raw_data in cur.fetchall()
+        ]

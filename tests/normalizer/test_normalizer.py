@@ -1,0 +1,48 @@
+import pytest
+
+from invariant.normalizer import ProfileLevel, normalize
+
+
+def _normalize(**overrides):
+    fields = {
+        "external_id": "5.2.10",
+        "title": "Ensure SSH root login is disabled",
+        "description": "some description",
+        "scored": True,
+        "profile_applicability": ["Level 1 - Server", "Level 1 - Workstation"],
+        "rationale": "some rationale",
+        "audit": "some audit",
+        "remediation": "some remediation",
+    }
+    fields.update(overrides)
+    return normalize(**fields)
+
+
+def test_normalize_parses_profile_applicability_into_structured_levels():
+    control = _normalize(profile_applicability=["Level 1 - Server", "Level 2 - Workstation"])
+
+    assert control.applicability == [
+        ProfileLevel(level=1, applies_to="Server"),
+        ProfileLevel(level=2, applies_to="Workstation"),
+    ]
+
+
+def test_normalize_strips_stray_bullet_glyph_from_text_fields():
+    bullet = ""
+    control = _normalize(description=f"first line\n{bullet} bullet item\nsecond line")
+
+    assert "" not in control.description
+    assert "bullet item" in control.description
+
+
+def test_normalize_keeps_scored_and_core_fields():
+    control = _normalize(scored=False, title="Some title", external_id="1.2.3")
+
+    assert control.scored is False
+    assert control.title == "Some title"
+    assert control.external_id == "1.2.3"
+
+
+def test_normalize_rejects_unrecognized_profile_applicability_entry():
+    with pytest.raises(ValueError):
+        _normalize(profile_applicability=["Not a real level string"])

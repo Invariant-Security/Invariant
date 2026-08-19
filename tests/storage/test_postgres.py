@@ -96,3 +96,69 @@ def test_upsert_extracted_item_stores_raw_data_as_jsonb(conn):
 
     assert external_id == "5.2.10"
     assert raw_data == {"scored": True, "audit": "sshd -T | grep permitrootlogin"}
+
+
+def test_upsert_control_stores_normalized_data_as_jsonb(conn):
+    source_id = db.upsert_source(conn, name="test-source-5", type="benchmark_publisher")
+    document_id = db.upsert_document(conn, source_id=source_id, name="test-doc-4", document_type="benchmark")
+    version_id = db.upsert_document_version(
+        conn,
+        document_id=document_id,
+        publisher_version="1.0.0",
+        content_hash="hash-d",
+        retrieved_at="2026-01-01T00:00:00+00:00",
+        raw_artifact_path="/tmp/d.pdf",
+    )
+
+    control_id = db.upsert_control(
+        conn,
+        document_version_id=version_id,
+        external_id="5.2.10",
+        title="Ensure SSH root login is disabled",
+        description="some description",
+        category=None,
+        normalized_data={"scored": True, "applicability": [{"level": 1, "applies_to": "Server"}]},
+    )
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT external_id, normalized_data FROM controls WHERE id = %s", (control_id,))
+        external_id, normalized_data = cur.fetchone()
+
+    assert external_id == "5.2.10"
+    assert normalized_data == {"scored": True, "applicability": [{"level": 1, "applies_to": "Server"}]}
+
+
+def test_select_latest_document_version_id_returns_none_when_missing(conn):
+    result = db.select_latest_document_version_id(conn, source="does-not-exist", document="also-missing")
+
+    assert result is None
+
+
+def test_select_latest_document_version_id_and_select_extracted_items(conn):
+    source_id = db.upsert_source(conn, name="test-source-6", type="benchmark_publisher")
+    document_id = db.upsert_document(conn, source_id=source_id, name="test-doc-5", document_type="benchmark")
+    version_id = db.upsert_document_version(
+        conn,
+        document_id=document_id,
+        publisher_version="1.0.0",
+        content_hash="hash-e",
+        retrieved_at="2026-01-01T00:00:00+00:00",
+        raw_artifact_path="/tmp/e.pdf",
+    )
+    db.upsert_extracted_item(
+        conn,
+        document_version_id=version_id,
+        external_id="5.2.10",
+        title="Ensure SSH root login is disabled",
+        description="desc",
+        category=None,
+        raw_data={"scored": True},
+    )
+
+    found_version_id = db.select_latest_document_version_id(conn, source="test-source-6", document="test-doc-5")
+    items = db.select_extracted_items(conn, document_version_id=version_id)
+
+    assert found_version_id == version_id
+    assert len(items) == 1
+    assert items[0]["external_id"] == "5.2.10"
+    assert items[0]["raw_data"] == {"scored": True}
