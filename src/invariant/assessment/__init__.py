@@ -99,6 +99,114 @@ def _evidence_ssh_login_grace_time(facts: SystemFacts) -> str:
     return f"sshd_config: LoginGraceTime {value}"
 
 
+def _evaluate_pam_faillock_enabled(facts: SystemFacts) -> bool:
+    """Matches the real audit command (e.g. debian_linux_12's "Ensure
+    pam_faillock module is enabled"): `grep pam_faillock.so
+    /etc/pam.d/common-{auth,account}` -- the module must show up in BOTH
+    files, not just one, since faillock needs an auth hook (to count/deny
+    attempts) and an account hook (to enforce the lockout) to actually work.
+    """
+    return "pam_faillock.so" in facts.pam_common_auth and "pam_faillock.so" in facts.pam_common_account
+
+
+def _evidence_pam_faillock_enabled(facts: SystemFacts) -> str:
+    auth = "present" if "pam_faillock.so" in facts.pam_common_auth else "missing"
+    account = "present" if "pam_faillock.so" in facts.pam_common_account else "missing"
+    return f"pam_faillock.so: common-auth={auth}, common-account={account}"
+
+
+def _evaluate_pam_pwquality_enabled(facts: SystemFacts) -> bool:
+    """Matches the real audit command: `grep pam_pwquality.so
+    /etc/pam.d/common-password`."""
+    return "pam_pwquality.so" in facts.pam_common_password
+
+
+def _evidence_pam_pwquality_enabled(facts: SystemFacts) -> str:
+    present = "present" if "pam_pwquality.so" in facts.pam_common_password else "missing"
+    return f"pam_pwquality.so in common-password: {present}"
+
+
+def _evaluate_pam_pwhistory_enabled(facts: SystemFacts) -> bool:
+    """Matches the real audit command: `grep pam_pwhistory.so
+    /etc/pam.d/common-password`."""
+    return "pam_pwhistory.so" in facts.pam_common_password
+
+
+def _evidence_pam_pwhistory_enabled(facts: SystemFacts) -> str:
+    present = "present" if "pam_pwhistory.so" in facts.pam_common_password else "missing"
+    return f"pam_pwhistory.so in common-password: {present}"
+
+
+def _pam_unix_nullok_lines(facts: SystemFacts) -> list[str]:
+    """Lines across common-auth/common-password/common-account that
+    configure pam_unix.so with the nullok argument -- nullok is what lets
+    an account with an empty password field authenticate with no password
+    at all. The real audit (e.g. debian_linux_12's "Ensure pam_unix does
+    not include nullok") also checks common-session and
+    common-session-noninteractive, but facts.SystemFacts doesn't collect
+    those two files -- see the final summary for that gap.
+    """
+    offending = []
+    for text in (facts.pam_common_auth, facts.pam_common_password, facts.pam_common_account):
+        for line in text.splitlines():
+            if "pam_unix.so" in line and "nullok" in line:
+                offending.append(line.strip())
+    return offending
+
+
+def _evaluate_pam_no_nullok(facts: SystemFacts) -> bool:
+    return len(_pam_unix_nullok_lines(facts)) == 0
+
+
+def _evidence_pam_no_nullok(facts: SystemFacts) -> str:
+    lines = _pam_unix_nullok_lines(facts)
+    if not lines:
+        return "no nullok found on pam_unix.so lines in common-auth/common-password/common-account"
+    return "nullok found: " + " | ".join(lines)
+
+
+def parse_login_defs(text: str) -> dict[str, str]:
+    """Parses "KEY value" lines from /etc/login.defs -- same shape as
+    parse_sshd_config() in facts.py (comments/blank lines skipped, later
+    lines win), just uppercase keys since that's login.defs' own
+    convention (UMASK, ENCRYPT_METHOD, PASS_MAX_DAYS, ...).
+    """
+    directives = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split(None, 1)
+        if len(parts) != 2:
+            continue
+        key, value = parts
+        directives[key.upper()] = value.strip()
+    return directives
+
+
+def _evaluate_default_umask(facts: SystemFacts) -> bool:
+    """Matches the real audit command (e.g. debian_linux_12's "Ensure
+    default user umask is configured"): `grep UMASK /etc/login.defs`,
+    value must be 027 or more restrictive. "More restrictive" means at
+    least those bits are masked (denied) -- checking `umask & 0o027 ==
+    0o027` accepts 027 itself and anything stricter (037, 077, ...)
+    without hardcoding a single allowed value.
+    """
+    value = parse_login_defs(facts.login_defs_text).get("UMASK")
+    if value is None:
+        return False
+    try:
+        umask = int(value, 8)
+    except ValueError:
+        return False
+    return (umask & 0o027) == 0o027
+
+
+def _evidence_default_umask(facts: SystemFacts) -> str:
+    value = parse_login_defs(facts.login_defs_text).get("UMASK", "<not set>")
+    return f"login.defs: UMASK {value}"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -147,6 +255,45 @@ CHECKS = [
         titles=["Ensure sshd LoginGraceTime is configured"],
         evaluate=_evaluate_ssh_login_grace_time,
         evidence=_evidence_ssh_login_grace_time,
+    ),
+    Check(
+        titles=["Ensure pam_faillock module is enabled"],
+        evaluate=_evaluate_pam_faillock_enabled,
+        evidence=_evidence_pam_faillock_enabled,
+    ),
+    Check(
+        titles=["Ensure pam_pwquality module is enabled"],
+        evaluate=_evaluate_pam_pwquality_enabled,
+        evidence=_evidence_pam_pwquality_enabled,
+    ),
+    Check(
+        titles=["Ensure pam_pwhistory module is enabled"],
+        evaluate=_evaluate_pam_pwhistory_enabled,
+        evidence=_evidence_pam_pwhistory_enabled,
+    ),
+    Check(
+        # "Ensure pam_unix does not include nullok" is the wording every
+        # real target document (debian_linux_11/12/13, ubuntu_linux_20_04/
+        # 22_04/24_04) actually uses; "Ensure pam modules do not include
+        # nullok" is the STIG documents' wording for the same underlying
+        # misconfiguration (nullok on a pam_unix.so line).
+        titles=[
+            "Ensure pam_unix does not include nullok",
+            "Ensure pam modules do not include nullok",
+        ],
+        evaluate=_evaluate_pam_no_nullok,
+        evidence=_evidence_pam_no_nullok,
+    ),
+    Check(
+        # Assigned candidate was "Ensure default user umask is 077 or more
+        # restrictive", but that exact control only exists in the STIG
+        # documents, which document_slug_for_os() never resolves to (see
+        # final summary). "Ensure default user umask is configured" is the
+        # real equivalent in every CIS document backing the actual demo
+        # targets, at a 027-or-more-restrictive threshold instead of 077.
+        titles=["Ensure default user umask is configured"],
+        evaluate=_evaluate_default_umask,
+        evidence=_evidence_default_umask,
     ),
 ]
 
