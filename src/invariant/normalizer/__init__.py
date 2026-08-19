@@ -5,11 +5,12 @@ from dataclasses import dataclass
 
 _PROFILE_RE = re.compile(r"^Level\s+(?P<level>\d+)\s*-\s*(?P<applies_to>.+)$")
 
-# CIS benchmark PDFs are Word exports that render bullet points using a
-# Wingdings-style glyph (private-use-area U+F0B7), not a real "-"/"*" --
-# shows up mid-paragraph in a few free-text fields too, not just the
-# one-entry-per-line ones the extractor already handles.
-_BULLET_CHAR = ""
+# CIS benchmark PDFs are Word exports that render bullet points as either
+# a Wingdings-style glyph (private-use-area U+F0B7, older documents) or a
+# real bullet character (U+2022, newer documents) -- shows up mid-paragraph
+# in a few free-text fields too, not just the one-entry-per-line ones the
+# extractor already handles.
+_BULLET_CHARS = "\uf0b7\u2022"
 
 
 @dataclass
@@ -74,4 +75,6 @@ def _parse_profile_level(entry: str) -> ProfileLevel:
 
 
 def _clean(text: str) -> str:
-    return text.replace(_BULLET_CHAR, "").strip()
+    for char in _BULLET_CHARS:
+        text = text.replace(char, "")
+    return text.strip()

@@ -8,13 +8,18 @@ from pypdf import PdfReader
 
 # Matches the start of a recommendation id line, e.g. "5.2.10 Ensure SSH...".
 # Deliberately loose -- long titles wrap across a line break in the PDF
-# text, so the "(Scored)"/"(Not Scored)" suffix isn't required here; see
+# text, so the scored/automated suffix isn't required here; see
 # _find_headers() for how a real header is confirmed.
 _ID_RE = re.compile(r"^(?P<id>\d+(?:\.\d+){1,4})\s+(?P<rest>.+)$")
 
 # Confirms a header actually ends here (possibly after merging wrapped
-# lines), not mid-sentence.
-_SCORED_SUFFIX_RE = re.compile(r"\((?P<scored>Scored|Not Scored)\)\s*$")
+# lines), not mid-sentence. CIS renamed "Scored"/"Not Scored" to
+# "Automated"/"Manual" starting with some newer benchmark versions
+# (confirmed: CIS Debian Linux 10 v1.0.0 uses "Scored", v2.0.0 uses
+# "Automated" -- same underlying concept, different wording) -- both
+# vocabularies show up depending on which document this is.
+_SCORED_SUFFIX_RE = re.compile(r"\((?P<scored>Scored|Not Scored|Automated|Manual)\)\s*$")
+_SCORED_TERMS = {"Scored", "Automated"}
 
 # The one section that reliably comes immediately after every real
 # recommendation header -- also true of the CIS Debian Linux 10 Benchmark's
@@ -131,7 +136,7 @@ def _find_headers(lines: list[str]) -> list[dict]:
                     {
                         "id": match.group("id"),
                         "title": title,
-                        "scored": scored_match.group("scored") == "Scored",
+                        "scored": scored_match.group("scored") in _SCORED_TERMS,
                         "line_start": i,
                         "body_start": end_line + 1,
                     }
@@ -172,10 +177,12 @@ def _split_sections(lines: list[str]) -> dict[str, str]:
 
 
 def _non_empty_lines(text: str) -> list[str]:
-    # CIS benchmark PDFs are Word exports that render bullet points using a
-    # Wingdings-style glyph (private-use-area U+F0B7), not a real "-"/"*".
+    # CIS benchmark PDFs are Word exports that render bullet points as
+    # either a Wingdings-style glyph (private-use-area U+F0B7, older
+    # documents) or a real bullet character (U+2022, newer documents) --
+    # never a plain "-"/"*".
     return [
-        line.strip().lstrip("").strip()
+        line.strip().lstrip("\uf0b7\u2022").strip()
         for line in text.splitlines()
         if line.strip()
     ]
