@@ -25,5 +25,33 @@ services:
     depends_on:
       - postgres
 
+  # bxsec demo targets -- assessed via `docker exec`, not real SSH/network
+  # access (see invariant.assessment). One clean baseline + one SSH
+  # misconfig + one permissions misconfig, per distro family, so the demo
+  # shows the same class of finding across two distros.
+  debian-baseline:
+    build: ./docker/debian-baseline
+    container_name: invariant-debian-baseline
+
+  debian-ssh-bad:
+    build: ./docker/debian-ssh-bad
+    container_name: invariant-debian-ssh-bad
+
+  debian-permissions-bad:
+    build: ./docker/debian-permissions-bad
+    container_name: invariant-debian-permissions-bad
+
+  ubuntu-baseline:
+    build: ./docker/ubuntu-baseline
+    container_name: invariant-ubuntu-baseline
+
+  ubuntu-ssh-bad:
+    build: ./docker/ubuntu-ssh-bad
+    container_name: invariant-ubuntu-ssh-bad
+
+  ubuntu-permissions-bad:
+    build: ./docker/ubuntu-permissions-bad
+    container_name: invariant-ubuntu-permissions-bad
+
 volumes:
   postgres_data:
