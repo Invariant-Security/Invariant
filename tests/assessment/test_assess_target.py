@@ -1,6 +1,6 @@
 import pytest
 
-from invariant.assessment import assess_target
+from invariant.assessment import CHECKS, assess_target
 from invariant.assessment.facts import collect_facts
 
 pytestmark = pytest.mark.integration
@@ -23,10 +23,11 @@ def test_collect_facts_reads_real_ubuntu_container():
 
 
 def _assert_fails_only(findings, expected_failing_ids):
-    """16 checks run per target now (not 5) -- rather than hardcode every
+    """Every check in CHECKS runs per target -- rather than hardcode every
     external_id (they drift per document, e.g. Debian 13 uses 5.1.21 where
-    the rest use 5.1.20), assert the demo's "known problems per machine"
-    story: exactly the given set of FAILs, everything else PASS.
+    the rest use 5.1.20) or a check count that grows as more checks are
+    added, assert the demo's "known problems per machine" story: exactly
+    the given set of FAILs, everything else PASS.
 
     Every target -- including both "baseline" containers -- now includes
     "5.1.1 Ensure access/permissions to/on /etc/ssh/sshd_config is/are
@@ -39,7 +40,7 @@ def _assert_fails_only(findings, expected_failing_ids):
     parallel -- worth a follow-up to harden the images.
     """
     statuses = {f.external_id: f.status for f in findings}
-    assert len(statuses) == 16
+    assert len(statuses) == len(CHECKS)
     for external_id in expected_failing_ids:
         assert statuses[external_id] == "FAIL", f"expected {external_id} to FAIL, got {statuses[external_id]}"
     assert all(
@@ -50,7 +51,7 @@ def _assert_fails_only(findings, expected_failing_ids):
 def test_assess_debian_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-debian-baseline")
 
-    assert len(findings) == 16
+    assert len(findings) == len(CHECKS)
     _assert_fails_only(findings, {"5.1.1"})
 
 
@@ -69,7 +70,7 @@ def test_assess_debian_permissions_bad_fails_only_shadow_and_sshd_config_permiss
 def test_assess_ubuntu_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-baseline")
 
-    assert len(findings) == 16
+    assert len(findings) == len(CHECKS)
     _assert_fails_only(findings, {"5.1.1"})
 
 
