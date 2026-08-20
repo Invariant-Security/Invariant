@@ -39,8 +39,8 @@ def _assert_fails_only(findings, expected_failing_ids):
 
 
 # Every target -- including both "baseline" containers -- now also includes
-# this fixed set of 7 in its expected failures, on top of whatever that
-# target's own story is meant to demonstrate. Confirmed against all 6 live
+# this fixed set in its expected failures, on top of whatever that target's
+# own story is meant to demonstrate. Confirmed against all 6 live
 # containers: none of the 6 Dockerfiles were ever updated to satisfy the
 # hardening Groups C and D added checks for (PAM faillock/pwquality/
 # pwhistory, nullok, umask, sshd Ciphers, sshd DisableForwarding, and
@@ -50,7 +50,34 @@ def _assert_fails_only(findings, expected_failing_ids):
 # as-is rather than editing the shared Dockerfiles while other agents are
 # actively using these same live containers in parallel; worth a follow-up
 # to harden the images.
-_SYSTEMIC_GAPS = {"5.1.1", "5.1.6", "5.1.8", "5.3.2.2", "5.3.2.3", "5.3.2.4", "5.3.3.4.1", "5.4.3.3"}
+#
+# Group G adds 8 more of the same shape: libpam-pwquality isn't installed on
+# any of the 6 images (same underlying gap as 5.3.2.3/5.3.2.4 above), so
+# /etc/security/pwquality.conf and /etc/security/pwhistory.conf don't exist
+# there either -- confirmed with a read-only collect_facts() against all 6
+# live containers (no modification made to any of them). 5.3.3.2.1 (changed
+# characters/difok), 5.3.3.2.2 (minlen), 5.3.3.2.3 (complexity), 5.3.3.2.4
+# (same consecutive characters/maxrepeat), 5.3.3.2.5 (maximum sequential
+# characters/maxsequence), 5.3.3.2.8 (quality enforced for root), 5.3.3.3.1
+# (history remember), 5.3.3.3.2 (history enforced for root).
+_SYSTEMIC_GAPS = {
+    "5.1.1",
+    "5.1.6",
+    "5.1.8",
+    "5.3.2.2",
+    "5.3.2.3",
+    "5.3.2.4",
+    "5.3.3.2.1",
+    "5.3.3.2.2",
+    "5.3.3.2.3",
+    "5.3.3.2.4",
+    "5.3.3.2.5",
+    "5.3.3.2.8",
+    "5.3.3.3.1",
+    "5.3.3.3.2",
+    "5.3.3.4.1",
+    "5.4.3.3",
+}
 
 
 def test_assess_debian_baseline_fails_only_sshd_config_permissions():

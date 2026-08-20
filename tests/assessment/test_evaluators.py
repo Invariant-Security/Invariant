@@ -22,6 +22,14 @@ from invariant.assessment import (
     _evaluate_pam_pwquality_enabled,
     _evaluate_passwd_accounts_use_shadowed_passwords,
     _evaluate_prelink_not_installed,
+    _evaluate_pwhistory_enforce_for_root,
+    _evaluate_pwhistory_remember,
+    _evaluate_pwquality_complexity,
+    _evaluate_pwquality_difok,
+    _evaluate_pwquality_enforce_for_root,
+    _evaluate_pwquality_max_repeat,
+    _evaluate_pwquality_max_sequence,
+    _evaluate_pwquality_minlen,
     _evaluate_root_only_gid0_account,
     _evaluate_root_only_uid0_account,
     _evaluate_rsh_client_not_installed,
@@ -61,6 +69,8 @@ def _facts(
     pam_common_account="",
     login_defs_text="",
     installed_packages=None,
+    pwquality_text="",
+    pwhistory_text="",
 ) -> SystemFacts:
     stats = dict(file_stats or {})
     if shadow_stat:
@@ -78,6 +88,8 @@ def _facts(
         pam_common_account=pam_common_account,
         login_defs_text=login_defs_text,
         installed_packages=installed_packages or set(),
+        pwquality_text=pwquality_text,
+        pwhistory_text=pwhistory_text,
     )
 
 
@@ -467,6 +479,160 @@ def test_default_umask_evaluator_fails_when_missing():
 def test_default_umask_evaluator_fails_on_non_octal_value():
     facts = _facts(login_defs_text="UMASK\t\tnot-a-number")
     assert _evaluate_default_umask(facts) is False
+
+
+def test_pwquality_enforce_for_root_evaluator_passes_when_present():
+    facts = _facts(pwquality_text="minlen = 14\nenforce_for_root\n")
+    assert _evaluate_pwquality_enforce_for_root(facts) is True
+
+
+def test_pwquality_enforce_for_root_evaluator_fails_when_absent():
+    facts = _facts(pwquality_text="minlen = 14\n")
+    assert _evaluate_pwquality_enforce_for_root(facts) is False
+
+
+def test_pwquality_enforce_for_root_evaluator_fails_when_commented_out():
+    facts = _facts(pwquality_text="# enforce_for_root\n")
+    assert _evaluate_pwquality_enforce_for_root(facts) is False
+
+
+def test_pwquality_enforce_for_root_evaluator_fails_when_file_missing():
+    facts = _facts(pwquality_text="cat: /etc/security/pwquality.conf: No such file or directory")
+    assert _evaluate_pwquality_enforce_for_root(facts) is False
+
+
+def test_pwquality_minlen_evaluator_passes_at_14():
+    facts = _facts(pwquality_text="minlen = 14\n")
+    assert _evaluate_pwquality_minlen(facts) is True
+
+
+def test_pwquality_minlen_evaluator_passes_above_14():
+    facts = _facts(pwquality_text="minlen=20\n")
+    assert _evaluate_pwquality_minlen(facts) is True
+
+
+def test_pwquality_minlen_evaluator_fails_below_14():
+    facts = _facts(pwquality_text="minlen = 8\n")
+    assert _evaluate_pwquality_minlen(facts) is False
+
+
+def test_pwquality_minlen_evaluator_fails_when_missing():
+    assert _evaluate_pwquality_minlen(_facts()) is False
+
+
+def test_pwquality_complexity_evaluator_passes_on_minclass_3():
+    facts = _facts(pwquality_text="minclass = 3\n")
+    assert _evaluate_pwquality_complexity(facts) is True
+
+
+def test_pwquality_complexity_evaluator_passes_on_three_mandatory_credits():
+    facts = _facts(pwquality_text="ucredit = -2\nlcredit = -2\ndcredit = -1\nocredit = 0\n")
+    assert _evaluate_pwquality_complexity(facts) is True
+
+
+def test_pwquality_complexity_evaluator_fails_when_all_defaults():
+    assert _evaluate_pwquality_complexity(_facts()) is False
+
+
+def test_pwquality_complexity_evaluator_fails_on_minclass_below_3():
+    facts = _facts(pwquality_text="minclass = 2\n")
+    assert _evaluate_pwquality_complexity(facts) is False
+
+
+def test_pwquality_complexity_evaluator_fails_when_a_credit_is_positive():
+    """A positive credit relaxes pam_pwquality's default policy instead of
+    tightening it, even alongside three negative credits."""
+    facts = _facts(pwquality_text="ucredit = -2\nlcredit = -2\ndcredit = -1\nocredit = 1\n")
+    assert _evaluate_pwquality_complexity(facts) is False
+
+
+def test_pwquality_max_repeat_evaluator_passes_at_3():
+    facts = _facts(pwquality_text="maxrepeat = 3\n")
+    assert _evaluate_pwquality_max_repeat(facts) is True
+
+
+def test_pwquality_max_repeat_evaluator_fails_at_0():
+    facts = _facts(pwquality_text="maxrepeat = 0\n")
+    assert _evaluate_pwquality_max_repeat(facts) is False
+
+
+def test_pwquality_max_repeat_evaluator_fails_above_3():
+    facts = _facts(pwquality_text="maxrepeat = 5\n")
+    assert _evaluate_pwquality_max_repeat(facts) is False
+
+
+def test_pwquality_max_repeat_evaluator_fails_when_missing():
+    assert _evaluate_pwquality_max_repeat(_facts()) is False
+
+
+def test_pwquality_max_sequence_evaluator_passes_at_3():
+    facts = _facts(pwquality_text="maxsequence = 3\n")
+    assert _evaluate_pwquality_max_sequence(facts) is True
+
+
+def test_pwquality_max_sequence_evaluator_fails_at_0():
+    facts = _facts(pwquality_text="maxsequence = 0\n")
+    assert _evaluate_pwquality_max_sequence(facts) is False
+
+
+def test_pwquality_max_sequence_evaluator_fails_when_missing():
+    assert _evaluate_pwquality_max_sequence(_facts()) is False
+
+
+def test_pwquality_difok_evaluator_passes_at_2():
+    facts = _facts(pwquality_text="difok = 2\n")
+    assert _evaluate_pwquality_difok(facts) is True
+
+
+def test_pwquality_difok_evaluator_fails_at_1():
+    facts = _facts(pwquality_text="difok = 1\n")
+    assert _evaluate_pwquality_difok(facts) is False
+
+
+def test_pwquality_difok_evaluator_fails_when_missing():
+    assert _evaluate_pwquality_difok(_facts()) is False
+
+
+def test_pwhistory_remember_evaluator_passes_via_pwhistory_conf():
+    facts = _facts(pwhistory_text="remember = 24\n")
+    assert _evaluate_pwhistory_remember(facts) is True
+
+
+def test_pwhistory_remember_evaluator_passes_via_pam_common_password():
+    facts = _facts(pam_common_password="password requisite pam_pwhistory.so remember=24 use_authtok")
+    assert _evaluate_pwhistory_remember(facts) is True
+
+
+def test_pwhistory_remember_evaluator_fails_below_threshold_in_both_locations():
+    facts = _facts(
+        pwhistory_text="remember = 5\n",
+        pam_common_password="password requisite pam_pwhistory.so remember=5 use_authtok",
+    )
+    assert _evaluate_pwhistory_remember(facts) is False
+
+
+def test_pwhistory_remember_evaluator_fails_when_neither_location_set():
+    assert _evaluate_pwhistory_remember(_facts()) is False
+
+
+def test_pwhistory_enforce_for_root_evaluator_passes_via_pwhistory_conf():
+    facts = _facts(pwhistory_text="remember = 24\nenforce_for_root\n")
+    assert _evaluate_pwhistory_enforce_for_root(facts) is True
+
+
+def test_pwhistory_enforce_for_root_evaluator_passes_via_pam_common_password():
+    facts = _facts(
+        pam_common_password="password requisite pam_pwhistory.so remember=24 enforce_for_root use_authtok"
+    )
+    assert _evaluate_pwhistory_enforce_for_root(facts) is True
+
+
+def test_pwhistory_enforce_for_root_evaluator_fails_when_neither_location_set():
+    facts = _facts(
+        pwhistory_text="remember = 24\n",
+        pam_common_password="password requisite pam_pwhistory.so remember=24 use_authtok",
+    )
+    assert _evaluate_pwhistory_enforce_for_root(facts) is False
 
 
 def test_max_sessions_evaluator_passes_at_10():

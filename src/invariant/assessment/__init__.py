@@ -390,6 +390,223 @@ def _evidence_pam_no_nullok(facts: SystemFacts) -> str:
     return "nullok found: " + " | ".join(lines)
 
 
+# Group G: password quality/history, via pwquality.conf and pwhistory.conf.
+def parse_pwquality_conf(text: str) -> dict[str, str]:
+    """Parses "key = value" lines from pwquality.conf/pwhistory.conf -- both
+    files share this exact format (comments/blank lines skipped, later lines
+    win, same convention as parse_login_defs()). Boolean-style options like
+    enforce_for_root appear on their own line with no "=" at all; those map
+    to "" so a plain membership check (`"enforce_for_root" in directives`)
+    is enough to detect them, matching the real audit's `grep
+    '^\\h*enforce_for_root\\b'`.
+    """
+    directives = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        key, sep, value = stripped.partition("=")
+        directives[key.strip().lower()] = value.strip() if sep else ""
+    return directives
+
+
+def _evaluate_pwquality_enforce_for_root(facts: SystemFacts) -> bool:
+    """Matches the real audit (control 5.3.3.2.8, "Ensure password quality
+    is enforced for the root user"): `grep -Psi '^\\h*enforce_for_root\\b'
+    /etc/security/pwquality.conf ...` -- presence of the directive is what's
+    checked, not a value (it's a bare flag).
+    """
+    return "enforce_for_root" in parse_pwquality_conf(facts.pwquality_text)
+
+
+def _evidence_pwquality_enforce_for_root(facts: SystemFacts) -> str:
+    present = "present" if "enforce_for_root" in parse_pwquality_conf(facts.pwquality_text) else "missing"
+    return f"pwquality.conf: enforce_for_root {present}"
+
+
+def _evaluate_pwquality_minlen(facts: SystemFacts) -> bool:
+    """Matches the real audit (control 5.3.3.2.2): `grep -Psi
+    '^\\h*minlen\\h*=\\h*(1[4-9]|[2-9][0-9]|[1-9][0-9]{2,})\\b'
+    /etc/security/pwquality.conf`, i.e. minlen must be set and >= 14.
+    """
+    value = parse_pwquality_conf(facts.pwquality_text).get("minlen")
+    if value is None:
+        return False
+    try:
+        return int(value) >= 14
+    except ValueError:
+        return False
+
+
+def _evidence_pwquality_minlen(facts: SystemFacts) -> str:
+    value = parse_pwquality_conf(facts.pwquality_text).get("minlen", "<not set>")
+    return f"pwquality.conf: minlen {value}"
+
+
+# The real audit (control 5.3.3.2.3, "Ensure password complexity is
+# configured") just greps for minclass/[dulo]credit and asks a human to
+# judge "conforms to local site policy" against its own example
+# (minclass=3, or ucredit=-2/lcredit=-2/dcredit=-1/ocredit=0) -- there's no
+# single documented pass/fail threshold to lift verbatim, so this evaluator
+# adopts that example as the threshold: either minclass requires at least 3
+# character classes, or at least 3 of the 4 [dulo]credit knobs are set to
+# mandatory (negative) with none left positive (positive relaxes, rather
+# than tightens, pam_pwquality's default policy).
+_PWQUALITY_CREDIT_KEYS = ("dcredit", "ucredit", "lcredit", "ocredit")
+
+
+def _evaluate_pwquality_complexity(facts: SystemFacts) -> bool:
+    directives = parse_pwquality_conf(facts.pwquality_text)
+
+    minclass = directives.get("minclass")
+    if minclass is not None:
+        try:
+            if int(minclass) >= 3:
+                return True
+        except ValueError:
+            pass
+
+    credit_values = []
+    for key in _PWQUALITY_CREDIT_KEYS:
+        value = directives.get(key)
+        if value is None:
+            continue
+        try:
+            credit_values.append(int(value))
+        except ValueError:
+            continue
+    negative = sum(1 for v in credit_values if v < 0)
+    positive = any(v > 0 for v in credit_values)
+    return negative >= 3 and not positive
+
+
+def _evidence_pwquality_complexity(facts: SystemFacts) -> str:
+    directives = parse_pwquality_conf(facts.pwquality_text)
+    parts = [f"{key}={directives[key]}" for key in ("minclass", *_PWQUALITY_CREDIT_KEYS) if key in directives]
+    if not parts:
+        return "pwquality.conf: none of minclass/dcredit/ucredit/lcredit/ocredit set"
+    return "pwquality.conf: " + ", ".join(parts)
+
+
+def _evaluate_pwquality_max_repeat(facts: SystemFacts) -> bool:
+    """Matches the real audit (control 5.3.3.2.4, "Ensure password same
+    consecutive characters is configured"): maxrepeat must be set, 3 or
+    less, and not 0 (0 disables the check entirely per pwquality.conf's own
+    documentation).
+    """
+    value = parse_pwquality_conf(facts.pwquality_text).get("maxrepeat")
+    if value is None:
+        return False
+    try:
+        n = int(value)
+    except ValueError:
+        return False
+    return 1 <= n <= 3
+
+
+def _evidence_pwquality_max_repeat(facts: SystemFacts) -> str:
+    value = parse_pwquality_conf(facts.pwquality_text).get("maxrepeat", "<not set>")
+    return f"pwquality.conf: maxrepeat {value}"
+
+
+def _evaluate_pwquality_max_sequence(facts: SystemFacts) -> bool:
+    """Matches the real audit (control 5.3.3.2.5, "Ensure password maximum
+    sequential characters is configured"): maxsequence must be set, 3 or
+    less, and not 0 -- same shape as maxrepeat above.
+    """
+    value = parse_pwquality_conf(facts.pwquality_text).get("maxsequence")
+    if value is None:
+        return False
+    try:
+        n = int(value)
+    except ValueError:
+        return False
+    return 1 <= n <= 3
+
+
+def _evidence_pwquality_max_sequence(facts: SystemFacts) -> str:
+    value = parse_pwquality_conf(facts.pwquality_text).get("maxsequence", "<not set>")
+    return f"pwquality.conf: maxsequence {value}"
+
+
+def _evaluate_pwquality_difok(facts: SystemFacts) -> bool:
+    """Matches the real audit (control 5.3.3.2.1, "Ensure password number of
+    changed characters is configured"): difok must be set and >= 2.
+    """
+    value = parse_pwquality_conf(facts.pwquality_text).get("difok")
+    if value is None:
+        return False
+    try:
+        return int(value) >= 2
+    except ValueError:
+        return False
+
+
+def _evidence_pwquality_difok(facts: SystemFacts) -> str:
+    value = parse_pwquality_conf(facts.pwquality_text).get("difok", "<not set>")
+    return f"pwquality.conf: difok {value}"
+
+
+def _pam_pwhistory_line(facts: SystemFacts) -> str:
+    """The common-password line configuring pam_pwhistory.so, if any --
+    shared by both password-history evaluators below.
+    """
+    for line in facts.pam_common_password.splitlines():
+        if "pam_pwhistory.so" in line:
+            return line.strip()
+    return ""
+
+
+def _pam_pwhistory_remember(facts: SystemFacts) -> int | None:
+    match = re.search(r"remember=(\d+)", _pam_pwhistory_line(facts))
+    return int(match.group(1)) if match else None
+
+
+def _evaluate_pwhistory_remember(facts: SystemFacts) -> bool:
+    """Matches the real audit (control 5.3.3.3.1, "Ensure password history
+    remember is configured"): remember must be >= 24. The real audit text
+    documents two valid locations that drift by document -- debian_linux_11
+    and ubuntu_linux_20_04/22_04/24_04 only document the pam_pwhistory.so
+    remember=<N> argument on common-password's pwhistory line; debian_linux_
+    12/13 (and ubuntu_linux_24_04, as a fallback) also accept /etc/security/
+    pwhistory.conf's own remember= directive. Both are checked here -- either
+    one meeting the threshold passes, matching how the real audit treats
+    them as interchangeable.
+    """
+    conf_value = parse_pwquality_conf(facts.pwhistory_text).get("remember")
+    if conf_value is not None:
+        try:
+            if int(conf_value) >= 24:
+                return True
+        except ValueError:
+            pass
+    remember = _pam_pwhistory_remember(facts)
+    return remember is not None and remember >= 24
+
+
+def _evidence_pwhistory_remember(facts: SystemFacts) -> str:
+    conf_value = parse_pwquality_conf(facts.pwhistory_text).get("remember", "<not set>")
+    remember = _pam_pwhistory_remember(facts)
+    pam_value = str(remember) if remember is not None else "<not set>"
+    return f"pwhistory.conf: remember {conf_value}; common-password pam_pwhistory.so: remember {pam_value}"
+
+
+def _evaluate_pwhistory_enforce_for_root(facts: SystemFacts) -> bool:
+    """Matches the real audit (control 5.3.3.3.2, "Ensure password history
+    is enforced for the root user") -- same two-location split as
+    _evaluate_pwhistory_remember() above, for the same reason.
+    """
+    if "enforce_for_root" in parse_pwquality_conf(facts.pwhistory_text):
+        return True
+    return "enforce_for_root" in _pam_pwhistory_line(facts)
+
+
+def _evidence_pwhistory_enforce_for_root(facts: SystemFacts) -> str:
+    conf_present = "present" if "enforce_for_root" in parse_pwquality_conf(facts.pwhistory_text) else "missing"
+    pam_present = "present" if "enforce_for_root" in _pam_pwhistory_line(facts) else "missing"
+    return f"pwhistory.conf: enforce_for_root {conf_present}; common-password pam_pwhistory.so: enforce_for_root {pam_present}"
+
+
 def parse_login_defs(text: str) -> dict[str, str]:
     """Parses "KEY value" lines from /etc/login.defs -- same shape as
     parse_sshd_config() in facts.py (comments/blank lines skipped, later
@@ -917,6 +1134,58 @@ CHECKS = [
         titles=["Ensure default user umask is configured"],
         evaluate=_evaluate_default_umask,
         evidence=_evidence_default_umask,
+    ),
+    # Group G: password quality/history, via pwquality.conf and
+    # pwhistory.conf. All 8 assigned candidates turned out to be distinct
+    # real controls with full 6-document title coverage -- none dropped.
+    # "Ensure minimum password length is configured" (debian_linux_11,
+    # ubuntu_linux_20_04/22_04) and "Ensure password length is configured"
+    # (debian_linux_12/13, ubuntu_linux_24_04) are the same control (identical
+    # minlen audit text, same external_id 5.3.3.2.2) under drifted wording,
+    # same pattern as the file-permission "access to X"/"permissions on X"
+    # drift Group A already documented.
+    Check(
+        titles=["Ensure password quality is enforced for the root user"],
+        evaluate=_evaluate_pwquality_enforce_for_root,
+        evidence=_evidence_pwquality_enforce_for_root,
+    ),
+    Check(
+        titles=[
+            "Ensure minimum password length is configured",
+            "Ensure password length is configured",
+        ],
+        evaluate=_evaluate_pwquality_minlen,
+        evidence=_evidence_pwquality_minlen,
+    ),
+    Check(
+        titles=["Ensure password complexity is configured"],
+        evaluate=_evaluate_pwquality_complexity,
+        evidence=_evidence_pwquality_complexity,
+    ),
+    Check(
+        titles=["Ensure password same consecutive characters is configured"],
+        evaluate=_evaluate_pwquality_max_repeat,
+        evidence=_evidence_pwquality_max_repeat,
+    ),
+    Check(
+        titles=["Ensure password maximum sequential characters is configured"],
+        evaluate=_evaluate_pwquality_max_sequence,
+        evidence=_evidence_pwquality_max_sequence,
+    ),
+    Check(
+        titles=["Ensure password number of changed characters is configured"],
+        evaluate=_evaluate_pwquality_difok,
+        evidence=_evidence_pwquality_difok,
+    ),
+    Check(
+        titles=["Ensure password history remember is configured"],
+        evaluate=_evaluate_pwhistory_remember,
+        evidence=_evidence_pwhistory_remember,
+    ),
+    Check(
+        titles=["Ensure password history is enforced for the root user"],
+        evaluate=_evaluate_pwhistory_enforce_for_root,
+        evidence=_evidence_pwhistory_enforce_for_root,
     ),
     # Group D: remaining sshd_config directives + SSH host key permissions.
     Check(
