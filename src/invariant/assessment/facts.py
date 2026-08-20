@@ -41,6 +41,19 @@ _STAT_PATHS = [
     "/etc/ssh/ssh_host_ecdsa_key.pub",
     "/etc/ssh/ssh_host_ed25519_key",
     "/etc/ssh/ssh_host_ed25519_key.pub",
+    "/etc/crontab",
+    "/etc/cron.hourly",
+    "/etc/cron.daily",
+    "/etc/cron.weekly",
+    "/etc/cron.monthly",
+    "/etc/cron.d",
+    "/etc/motd",
+    "/boot/grub/grub.cfg",
+    "/etc/audit/audit.rules",
+    "/etc/audit/rules.d",
+    "/sbin/auditctl",
+    "/sbin/auditd",
+    "/sbin/augenrules",
 ]
 
 _MARKER_OS_RELEASE = "===OS_RELEASE==="
@@ -66,6 +79,13 @@ _TEXT_BLOCKS = [
     ("hosts_allow_text", "===HOSTS_ALLOW===", "cat /etc/hosts.allow 2>&1"),
     ("hosts_deny_text", "===HOSTS_DENY===", "cat /etc/hosts.deny 2>&1"),
     ("installed_packages_text", "===INSTALLED_PACKAGES===", "dpkg-query -W -f='${Package}\\n' 2>&1"),
+    ("pwquality_text", "===PWQUALITY===", "cat /etc/security/pwquality.conf 2>&1"),
+    ("pwhistory_text", "===PWHISTORY===", "cat /etc/security/pwhistory.conf 2>&1"),
+    ("sudoers_text", "===SUDOERS===", "cat /etc/sudoers 2>&1"),
+    ("shells_text", "===SHELLS===", "cat /etc/shells 2>&1"),
+    ("rsyslog_text", "===RSYSLOG===", "cat /etc/rsyslog.conf 2>&1"),
+    ("journald_text", "===JOURNALD===", "cat /etc/systemd/journald.conf 2>&1"),
+    ("audit_rules_text", "===AUDIT_RULES===", "cat /etc/audit/rules.d/*.rules /etc/audit/audit.rules 2>&1"),
 ]
 
 
@@ -124,6 +144,13 @@ class SystemFacts:
     hosts_allow_text: str = ""
     hosts_deny_text: str = ""
     installed_packages: set[str] = field(default_factory=set)
+    pwquality_text: str = ""
+    pwhistory_text: str = ""
+    sudoers_text: str = ""
+    shells_text: str = ""
+    rsyslog_text: str = ""
+    journald_text: str = ""
+    audit_rules_text: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -236,6 +263,13 @@ def _parse_collect_output(output: str) -> SystemFacts:
         hosts_allow_text=text_values["hosts_allow_text"],
         hosts_deny_text=text_values["hosts_deny_text"],
         installed_packages=_parse_installed_packages(text_values["installed_packages_text"]),
+        pwquality_text=text_values["pwquality_text"],
+        pwhistory_text=text_values["pwhistory_text"],
+        sudoers_text=text_values["sudoers_text"],
+        shells_text=text_values["shells_text"],
+        rsyslog_text=text_values["rsyslog_text"],
+        journald_text=text_values["journald_text"],
+        audit_rules_text=text_values["audit_rules_text"],
     )
 
 
