@@ -27,20 +27,24 @@ def _assert_fails_only(findings, expected_failing_ids):
     external_id (they drift per document, e.g. Debian 13 uses 5.1.21 where
     the rest use 5.1.20) or a check count that grows as more checks are
     added, assert the demo's "known problems per machine" story: exactly
-    the given set of FAILs, everything else PASS.
+    the given set of FAILs, everything else PASS. Deliberately strict about
+    every id in expected_failing_ids actually existing in `findings` (a
+    plain statuses[external_id] lookup, not .get()) -- an id that doesn't
+    resolve for this target's document is a caller bug, not something to
+    paper over: e.g. "5.1.18" is Group F's MaxStartups check on
+    debian_linux_11/ubuntu_linux_20_04/22_04, but a *different*,
+    legitimately-passing check ("Ensure sshd MaxSessions is configured") on
+    debian_linux_12/13 and ubuntu_linux_24_04 -- silently skipping a
+    missing id would have masked exactly that collision instead of
+    surfacing it as the KeyError it should be. See
+    _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT and _AUDIT_FILES_GAP_BY_DOCUMENT below
+    for how every id that actually drifts across documents is kept
+    id-collision-safe by looking it up per target instead of assuming one
+    literal resolves everywhere.
     """
     statuses = {f.external_id: f.status for f in findings}
     assert len(statuses) == len(CHECKS)
     for external_id in expected_failing_ids:
-        # Not every gap id necessarily applies to every document: section
-        # numbering drifts between the debian_11/ubuntu_20_04 CIS documents
-        # backing these targets (confirmed for the Group I audit-file-
-        # ownership controls -- debian_11 numbers them 6.4.x, ubuntu_20_04
-        # numbers the same controls 6.3.x), so _SYSTEMIC_GAPS carries both
-        # id variants and this loop only asserts FAIL for whichever variant
-        # is actually present in this target's findings.
-        if external_id not in statuses:
-            continue
         assert statuses[external_id] == "FAIL", f"expected {external_id} to FAIL, got {statuses[external_id]}"
     assert all(
         status == "PASS" for eid, status in statuses.items() if eid not in expected_failing_ids
@@ -69,11 +73,6 @@ def _assert_fails_only(findings, expected_failing_ids):
 # (same consecutive characters/maxrepeat), 5.3.3.2.5 (maximum sequential
 # characters/maxsequence), 5.3.3.2.8 (quality enforced for root), 5.3.3.3.1
 # (history remember), 5.3.3.3.2 (history enforced for root).
-#
-# Group I adds the 5 auditd config/tooling ownership + rules-immutability
-# checks (see the id-alias comment further down, above _SYSTEMIC_GAPS'
-# 6.x.x.x entries) -- same underlying "package never installed on any of
-# the 6 images" story.
 #
 # Group H adds another, same shape: none of the 6 Dockerfiles have `sudo`
 # or `cron` installed at all (confirmed: /etc/sudoers and /etc/crontab
@@ -106,6 +105,12 @@ def _assert_fails_only(findings, expected_failing_ids):
 # ubuntu_linux_20_04, "6.1.1.1.X" for the rest) -- rather than force them
 # into this shared cross-document set, they're added per-target below,
 # following the exact same pattern already used for "5.1.20"/"7.1.5".
+#
+# Group F adds 2 more stable ones (pam_unix/pam_pwhistory both include
+# use_authtok), confirmed the same way against all 6 live containers: none
+# of the 6 Dockerfiles' PAM config sets use_authtok on either module's
+# line, nor configures pwhistory.conf at all on 4 of the 6 (the other 2
+# have a pwhistory.conf present but fully commented out).
 _SYSTEMIC_GAPS = {
     "5.1.1",
     "5.1.6",
@@ -123,38 +128,8 @@ _SYSTEMIC_GAPS = {
     "5.3.3.3.2",
     "5.3.3.4.1",
     "5.4.3.3",
-    # Group I: auditd config/tooling file ownership + rules immutability.
-    # None of the 6 Dockerfiles install auditd at all (confirmed: `dpkg -s
-    # auditd` fails, /etc/audit and /sbin/auditctl don't exist on all 6 live
-    # containers), so every one of these 5 new checks fails closed on every
-    # live demo target -- same "real, systemic, not a bug in any check"
-    # story as the existing gaps above, just discovered by this group
-    # instead. Unlike the section-5.x gaps above, each of our 6 targets maps
-    # to a genuinely different CIS document (debian_11/12/13,
-    # ubuntu_20_04/22_04/24_04, confirmed via each container's
-    # /etc/os-release) and this section's numbering isn't shared across all
-    # of them the way section 5.x happened to be -- debian_11 uses 6.4.x,
-    # everything else uses 6.2.x/6.3.x, and even within that the "immutable"
-    # control's id differs per document. So every distinct id (verified via
-    # Postgres) is listed below; _assert_fails_only skips whichever ids
-    # aren't present for a given target's document.
-    "6.4.4.6",  # debian_11: Ensure audit configuration files owner is configured
-    "6.3.4.6",  # ubuntu_20_04: same control
-    "6.2.4.6",  # debian_12/13, ubuntu_22_04/24_04: same control
-    "6.4.4.7",  # debian_11: Ensure audit configuration files group owner is configured
-    "6.3.4.7",  # ubuntu_20_04: same control
-    "6.2.4.7",  # debian_12/13, ubuntu_22_04/24_04: same control
-    "6.4.4.9",  # debian_11: Ensure audit tools owner is configured
-    "6.3.4.9",  # ubuntu_20_04: same control
-    "6.2.4.9",  # debian_12/13, ubuntu_22_04/24_04: same control
-    "6.4.4.10",  # debian_11: Ensure audit tools group owner is configured
-    "6.3.4.10",  # ubuntu_20_04: same control
-    "6.2.4.10",  # debian_12/13, ubuntu_22_04/24_04: same control
-    "6.4.3.20",  # debian_11: Ensure the audit configuration is immutable
-    "6.3.3.20",  # ubuntu_20_04: same control
-    "6.2.3.29",  # debian_12, ubuntu_24_04: same control
-    "6.2.3.36",  # debian_13: same control
-    "6.2.3.20",  # ubuntu_22_04: same control
+    "5.3.3.4.4",  # pam_unix includes use_authtok
+    "5.3.3.3.3",  # pam_pwhistory includes use_authtok
     # Group H: sudoers + cron file permissions -- same "package never
     # installed" story (see the comment near the top of this set).
     "2.4.1.2",  # /etc/crontab
@@ -165,6 +140,49 @@ _SYSTEMIC_GAPS = {
     "2.4.1.8",  # /etc/cron.d (debian_linux_11 uses 2.4.1.7 instead, see below)
     "5.2.3",  # Ensure sudo log file exists
     "1.4.2",  # Ensure access to bootloader config is configured (Group J)
+}
+
+# Group I: auditd config/tooling file ownership + rules immutability. None
+# of the 6 Dockerfiles install auditd at all (confirmed: `dpkg -s auditd`
+# fails, /etc/audit and /sbin/auditctl don't exist on all 6 live
+# containers), so every one of these 5 new checks fails closed on every
+# live demo target -- same "real, systemic, not a bug in any check" story
+# as the rest of _SYSTEMIC_GAPS, just discovered by this group instead.
+# Unlike that flat set, this section's numbering isn't shared across all 6
+# real target documents (debian_11 uses 6.4.x, ubuntu_20_04 uses 6.3.x,
+# the other 4 use 6.2.x, and even within that the "immutable" control's id
+# differs per document) -- looked up by the target's own document, same
+# collision-safety reasoning as _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT below,
+# rather than lumped into one flat set relying on a silent skip.
+_AUDIT_FILES_GAP_BY_DOCUMENT = {
+    "debian_linux_11": {"6.4.4.6", "6.4.4.7", "6.4.4.9", "6.4.4.10", "6.4.3.20"},
+    "debian_linux_12": {"6.2.4.6", "6.2.4.7", "6.2.4.9", "6.2.4.10", "6.2.3.29"},
+    "debian_linux_13": {"6.2.4.6", "6.2.4.7", "6.2.4.9", "6.2.4.10", "6.2.3.36"},
+    "ubuntu_linux_20_04": {"6.3.4.6", "6.3.4.7", "6.3.4.9", "6.3.4.10", "6.3.3.20"},
+    "ubuntu_linux_22_04": {"6.2.4.6", "6.2.4.7", "6.2.4.9", "6.2.4.10", "6.2.3.20"},
+    "ubuntu_linux_24_04": {"6.2.4.6", "6.2.4.7", "6.2.4.9", "6.2.4.10", "6.2.3.29"},
+}
+
+# Group F also found sshd's stock default MACs list includes
+# umac-64@openssh.com (flagged weak by CIS) and a stock MaxStartups of
+# 10:30:100 (100 > the 60-or-less ceiling) on all 6 live containers --
+# neither Dockerfile sets either directive explicitly, same "never
+# hardened for it" story as the rest of _SYSTEMIC_GAPS. But unlike every
+# id in that flat set, MACs' and MaxStartups' external_id both drift
+# *and* collide with other, unrelated, legitimately-passing checks
+# depending on the document (confirmed via Postgres: "5.1.18" is
+# MaxStartups on debian_linux_11/ubuntu_linux_20_04/22_04, but "Ensure
+# sshd MaxSessions is configured" -- a different check entirely -- on
+# debian_linux_12/13 and ubuntu_linux_24_04), so a single flat id can't
+# represent them safely across all 6 targets. Looked up by the target's
+# own document instead.
+_MAC_MAX_STARTUPS_GAP_BY_DOCUMENT = {
+    "debian_linux_11": {"5.1.15", "5.1.18"},
+    "debian_linux_12": {"5.1.15", "5.1.17"},
+    "debian_linux_13": {"5.1.16", "5.1.19"},
+    "ubuntu_linux_20_04": {"5.1.15", "5.1.18"},
+    "ubuntu_linux_22_04": {"5.1.15", "5.1.18"},
+    "ubuntu_linux_24_04": {"5.1.15", "5.1.17"},
 }
 
 
@@ -178,39 +196,80 @@ def test_assess_debian_baseline_fails_only_sshd_config_permissions():
     # also has its own nested journald external_ids (Group J).
     _assert_fails_only(
         findings,
-        (_SYSTEMIC_GAPS - {"2.4.1.8"}) | {"2.4.1.7", "6.2.1.1.3", "6.2.1.1.5", "6.2.1.1.6"},
+        (_SYSTEMIC_GAPS - {"2.4.1.8"})
+        | {"2.4.1.7", "6.2.1.1.3", "6.2.1.1.5", "6.2.1.1.6"}
+        | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_11"]
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_11"],
     )
 
 
 def test_assess_debian_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
+    # invariant-debian-ssh-bad runs debian:12, not debian:11 -- confirmed
+    # via collect_facts() (os_version_id "12").
     findings = assess_target("invariant-debian-ssh-bad")
 
-    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"5.1.20", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"})
+    _assert_fails_only(
+        findings,
+        _SYSTEMIC_GAPS
+        | {"5.1.20", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"}
+        | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_12"]
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_12"],
+    )
 
 
 def test_assess_debian_permissions_bad_fails_only_shadow_and_sshd_config_permissions():
+    # invariant-debian-permissions-bad runs debian:13, not debian:11 --
+    # confirmed via collect_facts() (os_version_id "13").
     findings = assess_target("invariant-debian-permissions-bad")
 
-    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"7.1.5", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"})
+    _assert_fails_only(
+        findings,
+        _SYSTEMIC_GAPS
+        | {"7.1.5", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"}
+        | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_13"]
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_13"],
+    )
 
 
 def test_assess_ubuntu_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-baseline")
 
     assert len(findings) == len(CHECKS)
-    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"6.2.1.3", "6.2.2.3", "6.2.2.4"})
+    _assert_fails_only(
+        findings,
+        _SYSTEMIC_GAPS
+        | {"6.2.1.3", "6.2.2.3", "6.2.2.4"}
+        | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
+    )
 
 
 def test_assess_ubuntu_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
+    # invariant-ubuntu-ssh-bad runs ubuntu:22.04, not ubuntu:20.04 --
+    # confirmed via collect_facts() (os_version_id "22.04").
     findings = assess_target("invariant-ubuntu-ssh-bad")
 
-    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"5.1.20", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"})
+    _assert_fails_only(
+        findings,
+        _SYSTEMIC_GAPS
+        | {"5.1.20", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"}
+        | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_22_04"],
+    )
 
 
 def test_assess_ubuntu_permissions_bad_fails_only_shadow_and_sshd_config_permissions():
+    # invariant-ubuntu-permissions-bad runs ubuntu:24.04, not ubuntu:20.04
+    # -- confirmed via collect_facts() (os_version_id "24.04").
     findings = assess_target("invariant-ubuntu-permissions-bad")
 
-    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"7.1.5", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"})
+    _assert_fails_only(
+        findings,
+        _SYSTEMIC_GAPS
+        | {"7.1.5", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"}
+        | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_24_04"],
+    )
 
 
 def test_assess_finding_carries_full_traceability_chain():
