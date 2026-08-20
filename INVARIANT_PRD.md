@@ -582,6 +582,26 @@ Planned source order:
 4. one explicit OWASP project/document
 5. NIST/NVD later
 
+### Catalog crawling (end-of-V0 goal, not required for the bxsec demo)
+
+The bxsec branch validated the fetch → extract → normalize pipeline against 17 real CIS
+benchmarks (6 Debian + 10 Ubuntu, ~4,700 controls) via a hand-maintained registry
+(`source.KNOWN_CIS_DOCUMENTS`: each entry's discovery/download parameters confirmed live
+against `cisecurity.org` before being added). That registry only knows about documents
+someone already added by hand.
+
+The natural next step, once V0's core pipeline is solid: a generic crawler that walks
+the CIS catalog itself (not a hardcoded per-product list) to discover documents and
+versions automatically, runs on a recurring schedule (e.g. weekly), and — using the
+content hash already computed by `invariant.collector` — only triggers
+extraction/normalization/`diff` for a document version when something actually changed,
+rather than reprocessing everything every run. Goal: the knowledge base stays current on
+its own, so assessments always run against up-to-date controls instead of a stale
+snapshot from whenever someone last ran `fetch` by hand. This builds directly on the
+already-designed V0.3 Notifications flow (Scheduled Check → Download → Hash → same/
+changed → extract → diff), just generalized from "recheck one known document" to
+"discover the whole catalog."
+
 ## V1 — Knowledge Platform
 
 V1 means the knowledge layer is mature enough to become the foundation for the assessment engine.

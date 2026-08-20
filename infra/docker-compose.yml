@@ -1,0 +1,57 @@
+# Local dev infra: PostgreSQL + Adminer (a lightweight web UI to browse the
+# database -- open http://localhost:8080, System: PostgreSQL, Server:
+# postgres, Username: invariant, Password: invariant_dev, Database:
+# invariant). Credentials match .env.example's DATABASE_URL so no extra
+# wiring is needed between this and the app.
+#
+# Run from repo root: docker compose -f infra/docker-compose.yml up
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: invariant
+      POSTGRES_PASSWORD: invariant_dev
+      POSTGRES_DB: invariant
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  adminer:
+    image: adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+  # bxsec demo targets -- assessed via `docker exec`, not real SSH/network
+  # access (see invariant.assessment). One clean baseline + one SSH
+  # misconfig + one permissions misconfig, per distro family, so the demo
+  # shows the same class of finding across two distros.
+  debian-baseline:
+    build: ./docker/debian-baseline
+    container_name: invariant-debian-baseline
+
+  debian-ssh-bad:
+    build: ./docker/debian-ssh-bad
+    container_name: invariant-debian-ssh-bad
+
+  debian-permissions-bad:
+    build: ./docker/debian-permissions-bad
+    container_name: invariant-debian-permissions-bad
+
+  ubuntu-baseline:
+    build: ./docker/ubuntu-baseline
+    container_name: invariant-ubuntu-baseline
+
+  ubuntu-ssh-bad:
+    build: ./docker/ubuntu-ssh-bad
+    container_name: invariant-ubuntu-ssh-bad
+
+  ubuntu-permissions-bad:
+    build: ./docker/ubuntu-permissions-bad
+    container_name: invariant-ubuntu-permissions-bad
+
+volumes:
+  postgres_data:

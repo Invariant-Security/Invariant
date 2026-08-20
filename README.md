@@ -69,30 +69,50 @@ O desenvolvimento é incremental, garantindo a maturidade da camada de dados ant
 
 Para rodar o Invariant localmente, você precisará de:
 - [Python 3.11+](https://www.python.org/downloads/)
-- [PostgreSQL](https://www.postgresql.org/download/) (Rodando localmente ou via Docker)
+- [Docker](https://www.docker.com/) e Docker Compose (sobe o PostgreSQL local, o Adminer e os containers-alvo da demo bxsec)
 - [Node.js](https://nodejs.org/) (para o frontend em React, quando ele existir)
-- *Recomendado: Make e Docker para facilitar o setup da infra.*
+- *Recomendado: `make` para os atalhos de comando.*
+
+> A branch `bxsec` já tem um pipeline funcional (fetch → extract → import → assess) sobre benchmarks CIS Debian/Ubuntu — as instruções abaixo refletem esse estado. O restante do projeto (main) ainda é um esqueleto, ver seção "O que este projeto é" no `CLAUDE.md`.
 
 ---
 
 ## 🚀 Quickstart
 
-1. **Clone o repositório:**
+1. **Clone o repositório e entre na branch de trabalho:**
    ```bash
-   git clone https://github.com/seu-usuario/invariant.git
+   git clone https://github.com/VictorDG00/invariant.git
    cd invariant
+   git checkout bxsec
    ```
 
-2. **Baixe as dependências:**
+2. **Baixe as dependências (ambiente virtual + extras de dev):**
    ```bash
-   pip install -e ".[dev]"
+   python -m venv venv && source venv/bin/activate
+   make install          # == pip install -e ".[dev]"
    ```
 
-3. **Configure o banco de dados:**
-   *(Instruções para rodar as migrations do PostgreSQL entrarão aqui)*
-
-4. **Execute o projeto:**
+3. **Configure as variáveis de ambiente:**
    ```bash
+   cp .env.example .env
+   ```
+   `DATABASE_URL` já vem preenchido com as credenciais que batem com o `docker-compose.yml` local. `CIS_EMAIL`/`CIS_USERNAME`/`CIS_PASSWORD` só são necessários se for baixar benchmarks novos direto do CIS WorkBench.
+
+4. **Suba a infra local (PostgreSQL + Adminer + containers-alvo da demo):**
+   ```bash
+   docker compose -f infra/docker-compose.yml up -d
+   ```
+   Adminer fica em http://localhost:8080 (System: PostgreSQL, Server: `postgres`, usuário/senha/DB conforme `.env`).
+
+5. **Aplique as migrations do banco:**
+   ```bash
+   alembic upgrade head
+   ```
+
+6. **Rode o CLI:**
+   ```bash
+   invariant --help
+   # ou, sem instalar o entry point:
    python -m invariant.cli.main --help
    ```
 
@@ -100,13 +120,33 @@ Para rodar o Invariant localmente, você precisará de:
 
 ## 💻 Como Usar (Usage)
 
-*(Comandos disponíveis na V0.1)*
+Pipeline completo para um documento CIS já baixado (ver `data/raw/cis/`) ou para baixar um novo:
 
-Para realizar a ingestão inicial do CIS AWS Foundations:
 ```bash
-python -m invariant.cli.main fetch cis
+invariant fetch cis-debian-linux-10        # baixa o PDF, calcula SHA-256, salva em data/raw/cis/debian/
+invariant extract cis-debian-linux-10      # faz o parse do PDF e persiste extracted_items
+invariant import_document cis-debian-linux-10   # normaliza extracted_items em controls
 ```
-*Este comando baixa o documento, salva o artefato bruto, calcula o hash SHA-256 e extrai os controles para o banco de dados.*
+
+Documentos disponíveis: qualquer chave de `source.KNOWN_CIS_DOCUMENTS` (`src/invariant/source/__init__.py`), ex. `cis-debian-linux-9` ... `cis-debian-linux-13`, `cis-ubuntu-linux-12-04` ... `cis-ubuntu-linux-24-04-stig`.
+
+Rodar a avaliação (demo bxsec) contra os containers Docker-alvo:
+```bash
+invariant assess
+```
+Isso executa os controles importados contra os 6 containers definidos em `infra/docker-compose.yml` (baseline/ssh-bad/permissions-bad × debian/ubuntu) e imprime um resumo PASS/FAIL, com a cadeia completa de evidência (Finding → Control → Source → Document Version) para cada FAIL.
+
+Rodar a API REST:
+```bash
+make run-api    # == uvicorn invariant.api.main:app --reload
+```
+
+Rodar os testes:
+```bash
+make test       # == pytest
+pytest tests/collector/                          # um pacote específico
+pytest tests/collector/test_collector.py::test_name -v  # um teste específico
+```
 
 ---
 
@@ -115,7 +155,11 @@ python -m invariant.cli.main fetch cis
 ```text
 invariant/
 ├── src/invariant/      # Lógica de negócio, API REST (FastAPI) e CLI (Typer)
-├── sql/                # Queries SQL brutas e schemas
+├── sql/                # Queries SQL brutas, schema e migrations (Alembic)
+├── infra/              # docker-compose.yml (Postgres, Adminer, containers-alvo da demo bxsec)
+├── data/raw/cis/       # Artefatos brutos (PDF) baixados dos benchmarks CIS
+│   ├── debian/         #   só os .pdf são versionados no git; o sidecar .json
+│   └── ubuntu/         #   (metadata/hash/timestamp) é gerado e ignorado a cada fetch
 ├── frontend/           # SPA em React (a ser criado)
 └── docs/
     └── study-notes/    # 🧪 Laboratório de estudos e notas de arquitetura. O código é produto do aprendizado documentado aqui.
