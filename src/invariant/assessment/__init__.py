@@ -914,6 +914,108 @@ def _evidence_prelink_not_installed(facts: SystemFacts) -> str:
     return f"installed_packages: prelink {'present' if present else 'absent'}"
 
 
+# Group I: auditd config/tooling file ownership + rules immutability. Real
+# audit commands (e.g. debian_linux_11 6.4.4.6/6.4.4.7/6.4.4.9/6.4.4.10)
+# check a whole file set -- `find /etc/audit/ -type f ( *.conf -o *.rules )
+# ! -user root` for config files, `stat -Lc "%n %U" /sbin/auditctl
+# /sbin/aureport /sbin/ausearch /sbin/autrace /sbin/auditd /sbin/augenrules`
+# for tools -- wider than what facts._STAT_PATHS collects (no
+# /etc/audit/auditd.conf, no /sbin/aureport, /sbin/ausearch, /sbin/autrace).
+# _owner_ok() below checks ownership only over the subset of each set that
+# facts.py actually stats; a facts.py extension to add the missing paths
+# would tighten this, but isn't needed to exercise the real behavior these
+# controls care about (are the audit config/tool files root-owned).
+_AUDIT_CONFIG_PATHS = ["/etc/audit/audit.rules", "/etc/audit/rules.d"]
+_AUDIT_TOOL_PATHS = ["/sbin/auditctl", "/sbin/auditd", "/sbin/augenrules"]
+
+
+def _owner_ok(
+    facts: SystemFacts,
+    paths: list[str],
+    *,
+    uid: int | None = None,
+    gnames: tuple[str, ...] | None = None,
+) -> bool:
+    """Shared by the Group I audit-file ownership checks: every path in
+    `paths` must be present in facts.file_stats and match the given uid
+    and/or group name(s). A path that failed to stat (or wasn't collected)
+    fails closed, same posture as _permissions_ok above.
+    """
+    for path in paths:
+        stat = facts.file_stats.get(path)
+        if stat is None or stat.uid is None:
+            return False
+        if uid is not None and stat.uid != uid:
+            return False
+        if gnames is not None and stat.gname not in gnames:
+            return False
+    return True
+
+
+def _evidence_for_stats(paths: list[str]) -> Callable[[SystemFacts], str]:
+    def _evidence(facts: SystemFacts) -> str:
+        parts = []
+        for path in paths:
+            stat = facts.file_stats.get(path)
+            if stat is None or stat.uid is None:
+                parts.append(f"{path}: could not stat")
+            else:
+                parts.append(f"{path}: uid={stat.uid} gid={stat.gid}({stat.gname})")
+        return " | ".join(parts)
+
+    return _evidence
+
+
+def _evaluate_audit_config_files_owner(facts: SystemFacts) -> bool:
+    return _owner_ok(facts, _AUDIT_CONFIG_PATHS, uid=0)
+
+
+_evidence_audit_config_files_owner = _evidence_for_stats(_AUDIT_CONFIG_PATHS)
+
+
+def _evaluate_audit_config_files_group_owner(facts: SystemFacts) -> bool:
+    return _owner_ok(facts, _AUDIT_CONFIG_PATHS, gnames=("root",))
+
+
+_evidence_audit_config_files_group_owner = _evidence_for_stats(_AUDIT_CONFIG_PATHS)
+
+
+def _evaluate_audit_tools_owner(facts: SystemFacts) -> bool:
+    return _owner_ok(facts, _AUDIT_TOOL_PATHS, uid=0)
+
+
+_evidence_audit_tools_owner = _evidence_for_stats(_AUDIT_TOOL_PATHS)
+
+
+def _evaluate_audit_tools_group_owner(facts: SystemFacts) -> bool:
+    return _owner_ok(facts, _AUDIT_TOOL_PATHS, gnames=("root",))
+
+
+_evidence_audit_tools_group_owner = _evidence_for_stats(_AUDIT_TOOL_PATHS)
+
+
+# Real audit (e.g. debian_linux_11 6.4.3.20): `grep -Ph -- '^\h*-e\h+2\b'
+# /etc/audit/rules.d/*.rules | tail -1` must print "-e 2" -- the immutable
+# flag has to be the last line loaded so no further rule changes can take
+# effect without a reboot. facts.audit_rules_text concatenates
+# rules.d/*.rules then audit.rules (the latter is generated from the
+# former by augenrules on a working system, so they agree); a simple
+# presence check over that combined text is equivalent here since the
+# pattern only ever matches an actual "-e 2" line.
+_AUDIT_IMMUTABLE_RE = re.compile(r"^\s*-e\s+2\b", re.MULTILINE)
+
+
+def _evaluate_audit_config_immutable(facts: SystemFacts) -> bool:
+    return bool(_AUDIT_IMMUTABLE_RE.search(facts.audit_rules_text))
+
+
+def _evidence_audit_config_immutable(facts: SystemFacts) -> str:
+    matches = _AUDIT_IMMUTABLE_RE.findall(facts.audit_rules_text)
+    if not matches:
+        return "audit rules: no '-e 2' (immutable) line found"
+    return f"audit rules: found {len(matches)} '-e 2' line(s)"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -1300,6 +1402,53 @@ CHECKS = [
         titles=["Ensure prelink is not installed"],
         evaluate=_evaluate_prelink_not_installed,
         evidence=_evidence_prelink_not_installed,
+    ),
+    # Group I: auditd config/tooling file ownership + rules immutability.
+    # Title wording is identical across all 6 real documents for these five
+    # (confirmed via Postgres) -- no variant aliases needed, unlike the
+    # Group A /etc/shadow-style controls. Three candidates from this
+    # group's brief were looked at and dropped:
+    #   - "Ensure audit log files group owner is configured": real audit
+    #     targets the log_group parameter in /etc/audit/auditd.conf and the
+    #     directory named there (typically /var/log/audit) -- neither is in
+    #     facts._STAT_PATHS/_TEXT_BLOCKS, so this would always evaluate to
+    #     the same "not configured" answer regardless of target state.
+    #     Would need facts.py extended with an auditd.conf text block and a
+    #     /var/log/audit stat entry to do meaningfully.
+    #   - "Ensure the audit configuration is loaded regardless of errors"
+    #     (the `-c` flag equivalent of the immutable-flag check below):
+    #     confirmed via Postgres this title only exists in debian_linux_13,
+    #     not the other 5 documents backing our demo targets -- would raise
+    #     LookupError on every other target, per the title-must-resolve-in-
+    #     all-6 constraint.
+    #   - "Ensure SUID and SGID files are reviewed": confirmed via Postgres
+    #     this control's real audit is a script that *lists* SUID/SGID
+    #     files for a human to review, not a pass/fail condition -- same
+    #     "Manual" shape prior groups dropped elsewhere.
+    Check(
+        titles=["Ensure audit configuration files owner is configured"],
+        evaluate=_evaluate_audit_config_files_owner,
+        evidence=_evidence_audit_config_files_owner,
+    ),
+    Check(
+        titles=["Ensure audit configuration files group owner is configured"],
+        evaluate=_evaluate_audit_config_files_group_owner,
+        evidence=_evidence_audit_config_files_group_owner,
+    ),
+    Check(
+        titles=["Ensure audit tools owner is configured"],
+        evaluate=_evaluate_audit_tools_owner,
+        evidence=_evidence_audit_tools_owner,
+    ),
+    Check(
+        titles=["Ensure audit tools group owner is configured"],
+        evaluate=_evaluate_audit_tools_group_owner,
+        evidence=_evidence_audit_tools_group_owner,
+    ),
+    Check(
+        titles=["Ensure the audit configuration is immutable"],
+        evaluate=_evaluate_audit_config_immutable,
+        evidence=_evidence_audit_config_immutable,
     ),
 ]
 

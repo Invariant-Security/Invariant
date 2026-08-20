@@ -1,6 +1,11 @@
 import pytest
 
 from invariant.assessment import (
+    _evaluate_audit_config_files_group_owner,
+    _evaluate_audit_config_files_owner,
+    _evaluate_audit_config_immutable,
+    _evaluate_audit_tools_group_owner,
+    _evaluate_audit_tools_owner,
     _evaluate_default_umask,
     _evaluate_etc_group_minus_permissions,
     _evaluate_etc_group_permissions,
@@ -71,6 +76,7 @@ def _facts(
     installed_packages=None,
     pwquality_text="",
     pwhistory_text="",
+    audit_rules_text="",
 ) -> SystemFacts:
     stats = dict(file_stats or {})
     if shadow_stat:
@@ -90,6 +96,7 @@ def _facts(
         installed_packages=installed_packages or set(),
         pwquality_text=pwquality_text,
         pwhistory_text=pwhistory_text,
+        audit_rules_text=audit_rules_text,
     )
 
 
@@ -899,3 +906,101 @@ def test_prelink_evaluator_passes_when_absent():
 def test_prelink_evaluator_fails_when_installed():
     facts = _facts(installed_packages={"prelink"})
     assert _evaluate_prelink_not_installed(facts) is False
+
+
+# --- Group I: auditd config/tooling file ownership + rules immutability --
+# Real audit commands check a wider file set (see module notes in
+# invariant.assessment above _AUDIT_CONFIG_PATHS/_AUDIT_TOOL_PATHS); these
+# evaluators check ownership over the subset facts.py actually stats.
+
+_AUDIT_CONFIG_OWNER_CASES = [
+    ("owner", _evaluate_audit_config_files_owner),
+    ("group_owner", _evaluate_audit_config_files_group_owner),
+]
+
+
+@pytest.mark.parametrize(
+    "name,evaluate", _AUDIT_CONFIG_OWNER_CASES, ids=[c[0] for c in _AUDIT_CONFIG_OWNER_CASES]
+)
+def test_audit_config_files_owner_evaluator_passes_when_root_owned(name, evaluate):
+    stat = FileStat(mode=0o640, uid=0, gid=0, gname="root")
+    facts = _facts(
+        file_stats={"/etc/audit/audit.rules": stat, "/etc/audit/rules.d": stat}
+    )
+    assert evaluate(facts) is True
+
+
+@pytest.mark.parametrize(
+    "name,evaluate", _AUDIT_CONFIG_OWNER_CASES, ids=[c[0] for c in _AUDIT_CONFIG_OWNER_CASES]
+)
+def test_audit_config_files_owner_evaluator_fails_when_not_root_owned(name, evaluate):
+    bad = FileStat(mode=0o640, uid=1000, gid=1000, gname="someuser")
+    good = FileStat(mode=0o640, uid=0, gid=0, gname="root")
+    facts = _facts(
+        file_stats={"/etc/audit/audit.rules": good, "/etc/audit/rules.d": bad}
+    )
+    assert evaluate(facts) is False
+
+
+@pytest.mark.parametrize(
+    "name,evaluate", _AUDIT_CONFIG_OWNER_CASES, ids=[c[0] for c in _AUDIT_CONFIG_OWNER_CASES]
+)
+def test_audit_config_files_owner_evaluator_fails_when_stat_missing(name, evaluate):
+    assert evaluate(_facts()) is False
+
+
+_AUDIT_TOOLS_OWNER_CASES = [
+    ("owner", _evaluate_audit_tools_owner),
+    ("group_owner", _evaluate_audit_tools_group_owner),
+]
+
+_ROOT_TOOL_STATS = {
+    path: FileStat(mode=0o755, uid=0, gid=0, gname="root")
+    for path in ("/sbin/auditctl", "/sbin/auditd", "/sbin/augenrules")
+}
+
+
+@pytest.mark.parametrize(
+    "name,evaluate", _AUDIT_TOOLS_OWNER_CASES, ids=[c[0] for c in _AUDIT_TOOLS_OWNER_CASES]
+)
+def test_audit_tools_owner_evaluator_passes_when_all_root_owned(name, evaluate):
+    assert evaluate(_facts(file_stats=_ROOT_TOOL_STATS)) is True
+
+
+@pytest.mark.parametrize(
+    "name,evaluate", _AUDIT_TOOLS_OWNER_CASES, ids=[c[0] for c in _AUDIT_TOOLS_OWNER_CASES]
+)
+def test_audit_tools_owner_evaluator_fails_when_one_tool_not_root_owned(name, evaluate):
+    stats = dict(_ROOT_TOOL_STATS)
+    stats["/sbin/auditctl"] = FileStat(mode=0o755, uid=1000, gid=1000, gname="someuser")
+    assert evaluate(_facts(file_stats=stats)) is False
+
+
+@pytest.mark.parametrize(
+    "name,evaluate", _AUDIT_TOOLS_OWNER_CASES, ids=[c[0] for c in _AUDIT_TOOLS_OWNER_CASES]
+)
+def test_audit_tools_owner_evaluator_fails_when_a_tool_stat_missing(name, evaluate):
+    stats = dict(_ROOT_TOOL_STATS)
+    del stats["/sbin/augenrules"]
+    assert evaluate(_facts(file_stats=stats)) is False
+
+
+def test_audit_config_immutable_evaluator_passes_on_dash_e_2():
+    facts = _facts(audit_rules_text="-D\n-b 8192\n-f 1\n-e 2\n")
+    assert _evaluate_audit_config_immutable(facts) is True
+
+
+def test_audit_config_immutable_evaluator_fails_when_absent():
+    facts = _facts(audit_rules_text="-D\n-b 8192\n-f 1\n")
+    assert _evaluate_audit_config_immutable(facts) is False
+
+
+def test_audit_config_immutable_evaluator_fails_on_empty_rules():
+    assert _evaluate_audit_config_immutable(_facts()) is False
+
+
+def test_audit_config_immutable_evaluator_ignores_similar_but_wrong_flag():
+    """-e 0/-e 1 are the "not enabled"/"enabled but changeable" states --
+    only -e 2 (locked) satisfies the control."""
+    facts = _facts(audit_rules_text="-D\n-e 1\n")
+    assert _evaluate_audit_config_immutable(facts) is False
