@@ -6,6 +6,7 @@ from invariant.assessment import (
     _evaluate_audit_config_immutable,
     _evaluate_audit_tools_group_owner,
     _evaluate_audit_tools_owner,
+    _evaluate_bootloader_config_permissions,
     _evaluate_cron_d_permissions,
     _evaluate_cron_daily_permissions,
     _evaluate_cron_hourly_permissions,
@@ -19,11 +20,15 @@ from invariant.assessment import (
     _evaluate_etc_gshadow_permissions,
     _evaluate_etc_issue_net_permissions,
     _evaluate_etc_issue_permissions,
+    _evaluate_etc_motd_permissions,
     _evaluate_etc_passwd_minus_permissions,
     _evaluate_etc_passwd_permissions,
     _evaluate_etc_shadow_minus_permissions,
     _evaluate_etc_shells_permissions,
     _evaluate_ftp_client_not_installed,
+    _evaluate_journald_compress,
+    _evaluate_journald_log_rotation,
+    _evaluate_journald_storage,
     _evaluate_ldap_client_not_installed,
     _evaluate_nis_client_not_installed,
     _evaluate_only_root_group_has_gid0,
@@ -47,6 +52,7 @@ from invariant.assessment import (
     _evaluate_rsync_not_installed,
     _evaluate_shadow_password_fields_not_empty,
     _evaluate_shadow_permissions,
+    _evaluate_shells_no_nologin,
     _evaluate_ssh_ciphers,
     _evaluate_ssh_disable_forwarding,
     _evaluate_ssh_ignore_rhosts,
@@ -87,6 +93,9 @@ def _facts(
     pwhistory_text="",
     audit_rules_text="",
     sudoers_text="",
+    shells_text="",
+    rsyslog_text="",
+    journald_text="",
 ) -> SystemFacts:
     stats = dict(file_stats or {})
     if shadow_stat:
@@ -108,6 +117,9 @@ def _facts(
         pwhistory_text=pwhistory_text,
         audit_rules_text=audit_rules_text,
         sudoers_text=sudoers_text,
+        shells_text=shells_text,
+        rsyslog_text=rsyslog_text,
+        journald_text=journald_text,
     )
 
 
@@ -1151,3 +1163,118 @@ def test_cron_0700_dir_evaluator_fails_when_not_owned_by_root(name, evaluate, pa
 )
 def test_cron_0700_dir_evaluator_fails_when_stat_missing(name, evaluate, path):
     assert evaluate(_facts()) is False
+# --- Group J: journald config + standalone file checks -------------------
+
+
+def test_journald_compress_evaluator_passes_when_yes():
+    facts = _facts(journald_text="[Journal]\nCompress=yes\n")
+    assert _evaluate_journald_compress(facts) is True
+
+
+def test_journald_compress_evaluator_fails_when_no():
+    facts = _facts(journald_text="[Journal]\nCompress=no\n")
+    assert _evaluate_journald_compress(facts) is False
+
+
+def test_journald_compress_evaluator_fails_when_not_set():
+    facts = _facts(journald_text="[Journal]\n")
+    assert _evaluate_journald_compress(facts) is False
+
+
+def test_journald_compress_evaluator_ignores_commented_lines():
+    facts = _facts(journald_text="[Journal]\n#Compress=yes\n")
+    assert _evaluate_journald_compress(facts) is False
+
+
+def test_journald_storage_evaluator_passes_when_persistent():
+    facts = _facts(journald_text="[Journal]\nStorage=persistent\n")
+    assert _evaluate_journald_storage(facts) is True
+
+
+def test_journald_storage_evaluator_fails_when_auto():
+    facts = _facts(journald_text="[Journal]\nStorage=auto\n")
+    assert _evaluate_journald_storage(facts) is False
+
+
+def test_journald_storage_evaluator_fails_when_not_set():
+    assert _evaluate_journald_storage(_facts(journald_text="[Journal]\n")) is False
+
+
+def test_journald_log_rotation_evaluator_passes_when_one_directive_set():
+    facts = _facts(journald_text="[Journal]\nSystemMaxUse=500M\n")
+    assert _evaluate_journald_log_rotation(facts) is True
+
+
+def test_journald_log_rotation_evaluator_passes_when_different_directive_set():
+    facts = _facts(journald_text="[Journal]\nRuntimeKeepFree=1G\n")
+    assert _evaluate_journald_log_rotation(facts) is True
+
+
+def test_journald_log_rotation_evaluator_fails_when_none_set():
+    facts = _facts(journald_text="[Journal]\nCompress=yes\n")
+    assert _evaluate_journald_log_rotation(facts) is False
+
+
+def test_shells_no_nologin_evaluator_passes_on_normal_shells():
+    facts = _facts(shells_text="# /etc/shells\n/bin/sh\n/bin/bash\n/bin/dash\n")
+    assert _evaluate_shells_no_nologin(facts) is True
+
+
+def test_shells_no_nologin_evaluator_fails_when_usr_sbin_nologin_listed():
+    facts = _facts(shells_text="# /etc/shells\n/bin/sh\n/usr/sbin/nologin\n")
+    assert _evaluate_shells_no_nologin(facts) is False
+
+
+def test_shells_no_nologin_evaluator_fails_when_sbin_nologin_listed():
+    facts = _facts(shells_text="# /etc/shells\n/sbin/nologin\n")
+    assert _evaluate_shells_no_nologin(facts) is False
+
+
+def test_shells_no_nologin_evaluator_ignores_commented_lines():
+    facts = _facts(shells_text="# /usr/sbin/nologin\n/bin/sh\n")
+    assert _evaluate_shells_no_nologin(facts) is True
+
+
+def test_motd_permissions_evaluator_passes_on_644_root():
+    stat = FileStat(mode=0o644, uid=0, gid=0, gname="root")
+    assert _evaluate_etc_motd_permissions(_facts(file_stats={"/etc/motd": stat})) is True
+
+
+def test_motd_permissions_evaluator_fails_when_world_writable():
+    stat = FileStat(mode=0o666, uid=0, gid=0, gname="root")
+    assert _evaluate_etc_motd_permissions(_facts(file_stats={"/etc/motd": stat})) is False
+
+
+def test_motd_permissions_evaluator_fails_when_not_owned_by_root():
+    stat = FileStat(mode=0o644, uid=1000, gid=0, gname="root")
+    assert _evaluate_etc_motd_permissions(_facts(file_stats={"/etc/motd": stat})) is False
+
+
+def test_motd_permissions_evaluator_passes_when_file_absent():
+    """Real audit's own documented pass condition: "-- OR -- Nothing is
+    returned" when /etc/motd doesn't exist at all (confirmed empirically:
+    plain ubuntu:22.04 ships with no /etc/motd)."""
+    assert _evaluate_etc_motd_permissions(_facts()) is True
+
+
+def test_bootloader_config_permissions_evaluator_passes_on_600_root():
+    stat = FileStat(mode=0o600, uid=0, gid=0, gname="root")
+    assert _evaluate_bootloader_config_permissions(_facts(file_stats={"/boot/grub/grub.cfg": stat})) is True
+
+
+def test_bootloader_config_permissions_evaluator_fails_when_world_readable():
+    stat = FileStat(mode=0o644, uid=0, gid=0, gname="root")
+    assert _evaluate_bootloader_config_permissions(_facts(file_stats={"/boot/grub/grub.cfg": stat})) is False
+
+
+def test_bootloader_config_permissions_evaluator_fails_when_not_owned_by_root():
+    stat = FileStat(mode=0o600, uid=1000, gid=0, gname="root")
+    assert _evaluate_bootloader_config_permissions(_facts(file_stats={"/boot/grub/grub.cfg": stat})) is False
+
+
+def test_bootloader_config_permissions_evaluator_fails_when_file_absent():
+    """Unlike /etc/motd, the real audit has no "file absent -> PASS" clause
+    for the bootloader config -- fails closed (confirmed empirically that
+    bare debian:12/ubuntu:22.04 containers have no /boot/grub/grub.cfg at
+    all, since no bootloader is installed in a container)."""
+    assert _evaluate_bootloader_config_permissions(_facts()) is False

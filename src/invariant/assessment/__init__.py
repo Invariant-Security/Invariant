@@ -1130,6 +1130,144 @@ def _evaluate_cron_d_permissions(facts: SystemFacts) -> bool:
 _evidence_cron_d_permissions = _evidence_for_stat("/etc/cron.d")
 
 
+def parse_journald_conf(text: str) -> dict[str, str]:
+    """Parses "Key=Value" lines from /etc/systemd/journald.conf -- same
+    directive-file shape as parse_sshd_config()/parse_login_defs(), just
+    with a `=` separator (systemd's own config-file convention) and
+    lowercased keys for case-insensitive lookup. Comment lines (#, ;),
+    blank lines, and section headers like [Journal] (no `=` in them) are
+    skipped; later lines win on conflict.
+    """
+    directives = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith(";"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        directives[key.strip().lower()] = value.strip()
+    return directives
+
+
+def _evaluate_journald_compress(facts: SystemFacts) -> bool:
+    """Matches the real audit command (identical across all 6 target
+    documents): `grep -Psi "^Compress=yes" /etc/systemd/journald.conf`."""
+    return parse_journald_conf(facts.journald_text).get("compress", "").lower() == "yes"
+
+
+def _evidence_journald_compress(facts: SystemFacts) -> str:
+    value = parse_journald_conf(facts.journald_text).get("compress", "<not set>")
+    return f"journald.conf: Compress={value}"
+
+
+def _evaluate_journald_storage(facts: SystemFacts) -> bool:
+    """Matches the real audit command: `grep -Psi "^Storage=persistent"
+    /etc/systemd/journald.conf`."""
+    return parse_journald_conf(facts.journald_text).get("storage", "").lower() == "persistent"
+
+
+def _evidence_journald_storage(facts: SystemFacts) -> str:
+    value = parse_journald_conf(facts.journald_text).get("storage", "<not set>")
+    return f"journald.conf: Storage={value}"
+
+
+# The 5 log-rotation parameters the real audit greps for (control
+# "Ensure journald log file rotation is configured"): `systemd-analyze
+# cat-config systemd/journald.conf | ... grep -Psi --
+# '\b(SystemMaxUse|SystemKeepFree|RuntimeMaxUse|RuntimeKeepFree|MaxFileSec)='`
+# then asks a human to "verify logs are rotated according to site policy" --
+# there's no single canonical value (it's site-policy-dependent), so the
+# check models the audit's own bar: at least one of these directives is
+# explicitly set to a non-empty value, not left at journald's defaults.
+_JOURNALD_ROTATION_KEYS = (
+    "systemmaxuse",
+    "systemkeepfree",
+    "runtimemaxuse",
+    "runtimekeepfree",
+    "maxfilesec",
+)
+
+
+def _evaluate_journald_log_rotation(facts: SystemFacts) -> bool:
+    directives = parse_journald_conf(facts.journald_text)
+    return any(directives.get(key) for key in _JOURNALD_ROTATION_KEYS)
+
+
+def _evidence_journald_log_rotation(facts: SystemFacts) -> str:
+    directives = parse_journald_conf(facts.journald_text)
+    set_keys = [f"{key}={directives[key]}" for key in _JOURNALD_ROTATION_KEYS if directives.get(key)]
+    if set_keys:
+        return "journald.conf: " + ", ".join(set_keys)
+    return "journald.conf: none of SystemMaxUse/SystemKeepFree/RuntimeMaxUse/RuntimeKeepFree/MaxFileSec are set"
+
+
+# The real audit greps for `/nologin\b` (word boundary) on non-comment
+# lines of /etc/shells -- catches both /sbin/nologin and /usr/sbin/nologin
+# style paths, not just a literal "nologin" shell name.
+_NOLOGIN_RE = re.compile(r"/nologin\b")
+
+
+def _evaluate_shells_no_nologin(facts: SystemFacts) -> bool:
+    for line in facts.shells_text.splitlines():
+        if line.strip().startswith("#"):
+            continue
+        if _NOLOGIN_RE.search(line):
+            return False
+    return True
+
+
+def _evidence_shells_no_nologin(facts: SystemFacts) -> str:
+    offending = [
+        line.strip()
+        for line in facts.shells_text.splitlines()
+        if not line.strip().startswith("#") and _NOLOGIN_RE.search(line)
+    ]
+    if offending:
+        return "/etc/shells: nologin listed: " + ", ".join(offending)
+    return "/etc/shells: nologin not listed"
+
+
+def _evaluate_etc_motd_permissions(facts: SystemFacts) -> bool:
+    """Real audit (e.g. debian_linux_11's 1.6.4): '[ -e /etc/motd ] && stat
+    ... -- OR -- Nothing is returned' -- unlike the Group A files (which
+    are always expected to exist), a missing /etc/motd is an explicitly
+    documented PASS, not a fail-closed condition (confirmed empirically:
+    plain ubuntu:22.04 ships with no /etc/motd at all). Permission
+    comparison itself reuses _permissions_ok(), same as every other
+    file-permission check.
+    """
+    stat = facts.file_stats.get("/etc/motd")
+    if stat is None or stat.mode is None:
+        return True
+    return _permissions_ok(facts, "/etc/motd", 0o644, ("root",))
+
+
+def _evidence_etc_motd_permissions(facts: SystemFacts) -> str:
+    stat = facts.file_stats.get("/etc/motd")
+    if stat is None or stat.mode is None:
+        return "/etc/motd: absent (not configured -- passes per documented audit OR-clause)"
+    return f"/etc/motd: mode={oct(stat.mode)} uid={stat.uid} gid={stat.gid}({stat.gname})"
+
+
+def _evaluate_bootloader_config_permissions(facts: SystemFacts) -> bool:
+    """Real audit (e.g. debian_linux_12's 1.4.2): stat /boot/grub/grub.cfg,
+    verify Uid/Gid both 0/root and mode 0600 or more restrictive -- unlike
+    /etc/motd, there's no documented "file absent -> PASS" clause here, so
+    a missing/unreadable file fails closed via _permissions_ok() (same
+    posture as the shadow/passwd family): an unprotected or absent
+    bootloader config can't be verified secure. Confirmed empirically that
+    bare debian:12/ubuntu:22.04 images ship with no /boot/grub/grub.cfg at
+    all (no bootloader installed in a container) -- this is exercised by a
+    throwaway container with a fake grub.cfg created for validation, not by
+    the real demo targets, which will all report FAIL for this reason.
+    """
+    return _permissions_ok(facts, "/boot/grub/grub.cfg", 0o600, ("root",))
+
+
+_evidence_bootloader_config_permissions = _evidence_for_stat("/boot/grub/grub.cfg")
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -1652,6 +1790,55 @@ CHECKS = [
         ],
         evaluate=_evaluate_cron_d_permissions,
         evidence=_evidence_cron_d_permissions,
+    ),
+    # Group J: journald config + a few standalone file checks. rsyslog was
+    # dropped in its entirety (all 4 candidates) -- confirmed via Postgres
+    # that debian_linux_11's benchmark version has zero "rsyslog"-titled
+    # controls anywhere (it only covers journald for logging; rsyslog
+    # config/CA-cert/gtls-forwarding controls first appear starting with
+    # debian_linux_12), so none of the 4 rsyslog candidates can resolve
+    # across all 6 real target documents -- see the module docstring notes
+    # below CHECKS for the per-candidate detail.
+    Check(
+        titles=["Ensure journald Compress is configured"],
+        evaluate=_evaluate_journald_compress,
+        evidence=_evidence_journald_compress,
+    ),
+    Check(
+        titles=["Ensure journald Storage is configured"],
+        evaluate=_evaluate_journald_storage,
+        evidence=_evidence_journald_storage,
+    ),
+    Check(
+        titles=["Ensure journald log file rotation is configured"],
+        evaluate=_evaluate_journald_log_rotation,
+        evidence=_evidence_journald_log_rotation,
+    ),
+    Check(
+        # "Ensure nologin is not listed in /etc/shells" is the clean title
+        # (debian_linux_12, ubuntu_linux_20_04, ubuntu_linux_24_04); the
+        # other 3 documents glue a PDF page-header onto the same control
+        # (confirmed via Postgres -- same audit text, same external_id
+        # 5.4.3.1, just a garbled title), so those exact garbled strings
+        # are listed as aliases rather than treated as separate controls.
+        titles=[
+            "Ensure nologin is not listed in /etc/shells",
+            "Configure user default environment Page 690  5.4.3.1 Ensure nologin is not listed in /etc/shells",
+            "Configure user default environment Page 693 Internal Only - General 5.4.3.1 Ensure nologin is not listed in /etc/shells",
+            "Configure user default environment Page 654 Internal Only - General 5.4.3.1 Ensure nologin is not listed in /etc/shells",
+        ],
+        evaluate=_evaluate_shells_no_nologin,
+        evidence=_evidence_shells_no_nologin,
+    ),
+    Check(
+        titles=["Ensure access to /etc/motd is configured"],
+        evaluate=_evaluate_etc_motd_permissions,
+        evidence=_evidence_etc_motd_permissions,
+    ),
+    Check(
+        titles=["Ensure access to bootloader config is configured"],
+        evaluate=_evaluate_bootloader_config_permissions,
+        evidence=_evidence_bootloader_config_permissions,
     ),
 ]
 

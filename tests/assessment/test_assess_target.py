@@ -92,6 +92,20 @@ def _assert_fails_only(findings, expected_failing_ids):
 # debian-baseline target) needs "2.4.1.7" added on its own call below
 # instead of the shared set, same as this file already does for 5.1.20 /
 # 7.1.5's own per-document drift.
+#
+# Group J added "1.4.2" ("Ensure access to bootloader config is
+# configured"): confirmed the same external_id across all 6 real documents,
+# and confirmed empirically that none of the 6 live containers have a
+# /boot/grub/grub.cfg at all (no bootloader installed in a container) --
+# facts.py's own documented "not configured" signal, and the check fails
+# closed on it per this group's design (see _evaluate_bootloader_config_
+# permissions' docstring). A second, genuinely new systemic gap: none of
+# the 6 Dockerfiles configure journald's Compress/Storage/log-rotation
+# directives either, but those 3 checks' external_ids drift per document
+# (nested "6.2.1.1.X" for debian_linux_11, flatter "6.2.1.X"/"6.2.2.X" for
+# ubuntu_linux_20_04, "6.1.1.1.X" for the rest) -- rather than force them
+# into this shared cross-document set, they're added per-target below,
+# following the exact same pattern already used for "5.1.20"/"7.1.5".
 _SYSTEMIC_GAPS = {
     "5.1.1",
     "5.1.6",
@@ -150,6 +164,7 @@ _SYSTEMIC_GAPS = {
     "2.4.1.6",  # /etc/cron.monthly
     "2.4.1.8",  # /etc/cron.d (debian_linux_11 uses 2.4.1.7 instead, see below)
     "5.2.3",  # Ensure sudo log file exists
+    "1.4.2",  # Ensure access to bootloader config is configured (Group J)
 }
 
 
@@ -159,39 +174,43 @@ def test_assess_debian_baseline_fails_only_sshd_config_permissions():
     assert len(findings) == len(CHECKS)
     # debian_linux_11 (this target's document) has no cron.yearly control,
     # so its /etc/cron.d control is 2.4.1.7, not the 2.4.1.8 every other
-    # real target document uses -- see _SYSTEMIC_GAPS's comment above.
-    _assert_fails_only(findings, (_SYSTEMIC_GAPS - {"2.4.1.8"}) | {"2.4.1.7"})
+    # real target document uses -- see _SYSTEMIC_GAPS's comment above. It
+    # also has its own nested journald external_ids (Group J).
+    _assert_fails_only(
+        findings,
+        (_SYSTEMIC_GAPS - {"2.4.1.8"}) | {"2.4.1.7", "6.2.1.1.3", "6.2.1.1.5", "6.2.1.1.6"},
+    )
 
 
 def test_assess_debian_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
     findings = assess_target("invariant-debian-ssh-bad")
 
-    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"5.1.20"})
+    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"5.1.20", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"})
 
 
 def test_assess_debian_permissions_bad_fails_only_shadow_and_sshd_config_permissions():
     findings = assess_target("invariant-debian-permissions-bad")
 
-    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"7.1.5"})
+    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"7.1.5", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"})
 
 
 def test_assess_ubuntu_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-baseline")
 
     assert len(findings) == len(CHECKS)
-    _assert_fails_only(findings, _SYSTEMIC_GAPS)
+    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"6.2.1.3", "6.2.2.3", "6.2.2.4"})
 
 
 def test_assess_ubuntu_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-ssh-bad")
 
-    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"5.1.20"})
+    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"5.1.20", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"})
 
 
 def test_assess_ubuntu_permissions_bad_fails_only_shadow_and_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-permissions-bad")
 
-    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"7.1.5"})
+    _assert_fails_only(findings, _SYSTEMIC_GAPS | {"7.1.5", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"})
 
 
 def test_assess_finding_carries_full_traceability_chain():
