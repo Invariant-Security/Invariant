@@ -6,6 +6,12 @@ from invariant.assessment import (
     _evaluate_audit_config_immutable,
     _evaluate_audit_tools_group_owner,
     _evaluate_audit_tools_owner,
+    _evaluate_cron_d_permissions,
+    _evaluate_cron_daily_permissions,
+    _evaluate_cron_hourly_permissions,
+    _evaluate_cron_monthly_permissions,
+    _evaluate_cron_weekly_permissions,
+    _evaluate_crontab_permissions,
     _evaluate_default_umask,
     _evaluate_etc_group_minus_permissions,
     _evaluate_etc_group_permissions,
@@ -54,6 +60,9 @@ from invariant.assessment import (
     _evaluate_ssh_public_host_key_permissions,
     _evaluate_ssh_use_pam,
     _evaluate_sshd_config_permissions,
+    _evaluate_sudo_log_file_exists,
+    _evaluate_sudo_no_nopasswd,
+    _evaluate_sudo_reauthentication_required,
     _evaluate_talk_client_not_installed,
     _evaluate_telnet_client_not_installed,
     _evaluate_x_window_not_installed,
@@ -77,6 +86,7 @@ def _facts(
     pwquality_text="",
     pwhistory_text="",
     audit_rules_text="",
+    sudoers_text="",
 ) -> SystemFacts:
     stats = dict(file_stats or {})
     if shadow_stat:
@@ -97,6 +107,7 @@ def _facts(
         pwquality_text=pwquality_text,
         pwhistory_text=pwhistory_text,
         audit_rules_text=audit_rules_text,
+        sudoers_text=sudoers_text,
     )
 
 
@@ -1004,3 +1015,139 @@ def test_audit_config_immutable_evaluator_ignores_similar_but_wrong_flag():
     only -e 2 (locked) satisfies the control."""
     facts = _facts(audit_rules_text="-D\n-e 1\n")
     assert _evaluate_audit_config_immutable(facts) is False
+
+
+# --- Group H: sudoers + cron file permissions ----------------------------
+# Confirmed against real throwaway containers (debian:12, ubuntu:22.04
+# with sudo+cron installed): package defaults leave /etc/crontab at 644
+# and every cron.* dir at 755 (both non-compliant, the same "world-
+# readable packaged default" gotcha already noted for sshd_config), and
+# /etc/sudoers has no Defaults logfile= line out of the box.
+
+_SUDOERS_DEFAULT = (
+    "Defaults\tenv_reset\n"
+    "Defaults\tmail_badpass\n"
+    "Defaults\tsecure_path=\"/usr/local/sbin:/usr/local/bin\"\n"
+    "Defaults\tuse_pty\n"
+    "\n"
+    "root\tALL=(ALL:ALL) ALL\n"
+    "%sudo\tALL=(ALL:ALL) ALL\n"
+)
+
+
+def test_sudo_log_file_exists_evaluator_fails_on_packaged_default():
+    assert _evaluate_sudo_log_file_exists(_facts(sudoers_text=_SUDOERS_DEFAULT)) is False
+
+
+def test_sudo_log_file_exists_evaluator_passes_when_logfile_configured():
+    text = _SUDOERS_DEFAULT + 'Defaults\tlogfile="/var/log/sudo.log"\n'
+    assert _evaluate_sudo_log_file_exists(_facts(sudoers_text=text)) is True
+
+
+def test_sudo_log_file_exists_evaluator_ignores_commented_out_line():
+    text = _SUDOERS_DEFAULT + '# Defaults logfile="/var/log/sudo.log"\n'
+    assert _evaluate_sudo_log_file_exists(_facts(sudoers_text=text)) is False
+
+
+def test_sudo_no_nopasswd_evaluator_passes_on_packaged_default():
+    assert _evaluate_sudo_no_nopasswd(_facts(sudoers_text=_SUDOERS_DEFAULT)) is True
+
+
+def test_sudo_no_nopasswd_evaluator_fails_when_nopasswd_present():
+    text = _SUDOERS_DEFAULT + "alice\tALL=(ALL) NOPASSWD: ALL\n"
+    assert _evaluate_sudo_no_nopasswd(_facts(sudoers_text=text)) is False
+
+
+def test_sudo_no_nopasswd_evaluator_ignores_commented_out_line():
+    text = _SUDOERS_DEFAULT + "# alice ALL=(ALL) NOPASSWD: ALL\n"
+    assert _evaluate_sudo_no_nopasswd(_facts(sudoers_text=text)) is True
+
+
+def test_sudo_reauthentication_required_evaluator_passes_on_packaged_default():
+    assert _evaluate_sudo_reauthentication_required(_facts(sudoers_text=_SUDOERS_DEFAULT)) is True
+
+
+def test_sudo_reauthentication_required_evaluator_fails_when_bang_authenticate_present():
+    text = _SUDOERS_DEFAULT + "Defaults\t!authenticate\n"
+    assert _evaluate_sudo_reauthentication_required(_facts(sudoers_text=text)) is False
+
+
+def test_sudo_reauthentication_required_evaluator_ignores_commented_out_line():
+    text = _SUDOERS_DEFAULT + "# Defaults !authenticate\n"
+    assert _evaluate_sudo_reauthentication_required(_facts(sudoers_text=text)) is True
+
+
+_CRON_0600_CASES = [
+    ("crontab", _evaluate_crontab_permissions, "/etc/crontab"),
+]
+
+
+@pytest.mark.parametrize("name,evaluate,path", _CRON_0600_CASES, ids=[c[0] for c in _CRON_0600_CASES])
+def test_cron_0600_evaluator_passes_at_boundary(name, evaluate, path):
+    stat = FileStat(mode=0o600, uid=0, gid=0, gname="root")
+    assert evaluate(_facts(file_stats={path: stat})) is True
+
+
+@pytest.mark.parametrize("name,evaluate,path", _CRON_0600_CASES, ids=[c[0] for c in _CRON_0600_CASES])
+def test_cron_0600_evaluator_fails_on_packaged_default_644(name, evaluate, path):
+    """Real gotcha confirmed against a live debian:12/ubuntu:22.04
+    container with the `cron` package freshly installed: /etc/crontab
+    ships at mode 644, which fails this control's 600-or-more-restrictive
+    requirement."""
+    stat = FileStat(mode=0o644, uid=0, gid=0, gname="root")
+    assert evaluate(_facts(file_stats={path: stat})) is False
+
+
+@pytest.mark.parametrize("name,evaluate,path", _CRON_0600_CASES, ids=[c[0] for c in _CRON_0600_CASES])
+def test_cron_0600_evaluator_fails_when_not_owned_by_root(name, evaluate, path):
+    stat = FileStat(mode=0o600, uid=1000, gid=0, gname="root")
+    assert evaluate(_facts(file_stats={path: stat})) is False
+
+
+@pytest.mark.parametrize("name,evaluate,path", _CRON_0600_CASES, ids=[c[0] for c in _CRON_0600_CASES])
+def test_cron_0600_evaluator_fails_when_stat_missing(name, evaluate, path):
+    assert evaluate(_facts()) is False
+
+
+_CRON_0700_DIR_CASES = [
+    ("cron_hourly", _evaluate_cron_hourly_permissions, "/etc/cron.hourly"),
+    ("cron_daily", _evaluate_cron_daily_permissions, "/etc/cron.daily"),
+    ("cron_weekly", _evaluate_cron_weekly_permissions, "/etc/cron.weekly"),
+    ("cron_monthly", _evaluate_cron_monthly_permissions, "/etc/cron.monthly"),
+    ("cron_d", _evaluate_cron_d_permissions, "/etc/cron.d"),
+]
+
+
+@pytest.mark.parametrize(
+    "name,evaluate,path", _CRON_0700_DIR_CASES, ids=[c[0] for c in _CRON_0700_DIR_CASES]
+)
+def test_cron_0700_dir_evaluator_passes_at_boundary(name, evaluate, path):
+    stat = FileStat(mode=0o700, uid=0, gid=0, gname="root")
+    assert evaluate(_facts(file_stats={path: stat})) is True
+
+
+@pytest.mark.parametrize(
+    "name,evaluate,path", _CRON_0700_DIR_CASES, ids=[c[0] for c in _CRON_0700_DIR_CASES]
+)
+def test_cron_0700_dir_evaluator_fails_on_packaged_default_755(name, evaluate, path):
+    """Real gotcha confirmed against a live debian:12/ubuntu:22.04
+    container with the `cron` package freshly installed: every cron.* dir
+    ships at mode 755, which fails this control's 700-or-more-restrictive
+    requirement."""
+    stat = FileStat(mode=0o755, uid=0, gid=0, gname="root")
+    assert evaluate(_facts(file_stats={path: stat})) is False
+
+
+@pytest.mark.parametrize(
+    "name,evaluate,path", _CRON_0700_DIR_CASES, ids=[c[0] for c in _CRON_0700_DIR_CASES]
+)
+def test_cron_0700_dir_evaluator_fails_when_not_owned_by_root(name, evaluate, path):
+    stat = FileStat(mode=0o700, uid=1000, gid=0, gname="root")
+    assert evaluate(_facts(file_stats={path: stat})) is False
+
+
+@pytest.mark.parametrize(
+    "name,evaluate,path", _CRON_0700_DIR_CASES, ids=[c[0] for c in _CRON_0700_DIR_CASES]
+)
+def test_cron_0700_dir_evaluator_fails_when_stat_missing(name, evaluate, path):
+    assert evaluate(_facts()) is False

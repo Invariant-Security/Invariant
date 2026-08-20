@@ -69,6 +69,29 @@ def _assert_fails_only(findings, expected_failing_ids):
 # (same consecutive characters/maxrepeat), 5.3.3.2.5 (maximum sequential
 # characters/maxsequence), 5.3.3.2.8 (quality enforced for root), 5.3.3.3.1
 # (history remember), 5.3.3.3.2 (history enforced for root).
+#
+# Group I adds the 5 auditd config/tooling ownership + rules-immutability
+# checks (see the id-alias comment further down, above _SYSTEMIC_GAPS'
+# 6.x.x.x entries) -- same underlying "package never installed on any of
+# the 6 images" story.
+#
+# Group H adds another, same shape: none of the 6 Dockerfiles have `sudo`
+# or `cron` installed at all (confirmed: /etc/sudoers and /etc/crontab
+# both come back "No such file or directory" on every one of the 6 live
+# containers), so every cron-file-permission check fails (missing file/dir
+# -> stat() fails -> evaluate() returns False, the same "not found is not
+# a pass" posture already established for the Group A permission checks),
+# and "Ensure sudo log file exists" fails the same way (no /etc/sudoers to
+# hold a Defaults logfile= line). The two sudoers *content* checks (no
+# NOPASSWD, no !authenticate) pass vacuously instead -- an empty/missing
+# sudoers has no offending line to find -- so those two are NOT added
+# here. /etc/cron.d's external_id itself drifts per document (2.4.1.7 for
+# debian_linux_11, 2.4.1.8 for every other document, which inserts an
+# unimplemented cron.yearly control at 2.4.1.7 first) -- the common
+# "2.4.1.8" id covers 5 of the 6 real targets; debian_linux_11 (the
+# debian-baseline target) needs "2.4.1.7" added on its own call below
+# instead of the shared set, same as this file already does for 5.1.20 /
+# 7.1.5's own per-document drift.
 _SYSTEMIC_GAPS = {
     "5.1.1",
     "5.1.6",
@@ -118,6 +141,15 @@ _SYSTEMIC_GAPS = {
     "6.2.3.29",  # debian_12, ubuntu_24_04: same control
     "6.2.3.36",  # debian_13: same control
     "6.2.3.20",  # ubuntu_22_04: same control
+    # Group H: sudoers + cron file permissions -- same "package never
+    # installed" story (see the comment near the top of this set).
+    "2.4.1.2",  # /etc/crontab
+    "2.4.1.3",  # /etc/cron.hourly
+    "2.4.1.4",  # /etc/cron.daily
+    "2.4.1.5",  # /etc/cron.weekly
+    "2.4.1.6",  # /etc/cron.monthly
+    "2.4.1.8",  # /etc/cron.d (debian_linux_11 uses 2.4.1.7 instead, see below)
+    "5.2.3",  # Ensure sudo log file exists
 }
 
 
@@ -125,7 +157,10 @@ def test_assess_debian_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-debian-baseline")
 
     assert len(findings) == len(CHECKS)
-    _assert_fails_only(findings, _SYSTEMIC_GAPS)
+    # debian_linux_11 (this target's document) has no cron.yearly control,
+    # so its /etc/cron.d control is 2.4.1.7, not the 2.4.1.8 every other
+    # real target document uses -- see _SYSTEMIC_GAPS's comment above.
+    _assert_fails_only(findings, (_SYSTEMIC_GAPS - {"2.4.1.8"}) | {"2.4.1.7"})
 
 
 def test_assess_debian_ssh_bad_fails_only_ssh_and_sshd_config_permissions():

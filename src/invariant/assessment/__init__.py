@@ -1016,6 +1016,120 @@ def _evidence_audit_config_immutable(facts: SystemFacts) -> str:
     return f"audit rules: found {len(matches)} '-e 2' line(s)"
 
 
+def _sudoers_active_lines(text: str) -> list[str]:
+    """Non-blank, non-comment lines from /etc/sudoers text -- comment
+    detection follows the same "strip, then check for a leading #" rule as
+    the pam_unix nullok check above, not the real audit's stricter
+    "^[^#]" grep (which would also flag an indented "  # ..." line as
+    active) -- same posture already established in this module.
+    """
+    return [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+
+
+def _evaluate_sudo_no_nopasswd(facts: SystemFacts) -> bool:
+    """Real audit (control 5.2.4, e.g. debian_linux_12's "Ensure users
+    must provide password for escalation"; debian_linux_11/ubuntu_20_04
+    word it "...for privilege escalation"): `grep -r "^[^#].*NOPASSWD"
+    /etc/sudoers*` must return nothing -- no active sudoers line may grant
+    NOPASSWD privilege escalation. facts.py only collects /etc/sudoers
+    itself, not /etc/sudoers.d/* -- a drop-in NOPASSWD rule there would be
+    invisible to this check, same "known gap" posture as the nullok
+    check's missing common-session files (see module docstring notes
+    below the CHECKS list).
+    """
+    return not any("NOPASSWD" in line for line in _sudoers_active_lines(facts.sudoers_text))
+
+
+def _evidence_sudo_no_nopasswd(facts: SystemFacts) -> str:
+    offending = [line for line in _sudoers_active_lines(facts.sudoers_text) if "NOPASSWD" in line]
+    if offending:
+        return "sudoers: NOPASSWD found: " + " | ".join(offending)
+    return "sudoers: no NOPASSWD entries"
+
+
+def _evaluate_sudo_reauthentication_required(facts: SystemFacts) -> bool:
+    """Real audit (control 5.2.5, "Ensure re-authentication for privilege
+    escalation is not disabled globally" -- identical title text in all 6
+    real target documents): `grep -r "^[^#].*\\!authenticate"
+    /etc/sudoers*` must return nothing -- no active line may carry a
+    !authenticate tag, which lets a user run sudo without re-entering
+    their password at all.
+    """
+    return not any("!authenticate" in line for line in _sudoers_active_lines(facts.sudoers_text))
+
+
+def _evidence_sudo_reauthentication_required(facts: SystemFacts) -> str:
+    offending = [line for line in _sudoers_active_lines(facts.sudoers_text) if "!authenticate" in line]
+    if offending:
+        return "sudoers: !authenticate found: " + " | ".join(offending)
+    return "sudoers: no !authenticate entries"
+
+
+_SUDO_LOGFILE_RE = re.compile(r"(?i)^Defaults\b.*\blogfile\s*=\s*\S")
+
+
+def _evaluate_sudo_log_file_exists(facts: SystemFacts) -> bool:
+    """Real audit (control 5.2.3, "Ensure sudo log file exists" --
+    identical title text in all 6 real target documents): grep for a
+    `Defaults ... logfile=...` line in /etc/sudoers*.
+    """
+    return any(_SUDO_LOGFILE_RE.match(line) for line in _sudoers_active_lines(facts.sudoers_text))
+
+
+def _evidence_sudo_log_file_exists(facts: SystemFacts) -> str:
+    match = next((line for line in _sudoers_active_lines(facts.sudoers_text) if _SUDO_LOGFILE_RE.match(line)), None)
+    return f"sudoers: {match}" if match else "sudoers: no Defaults logfile= line found"
+
+
+# Group H: cron file/directory permissions. Same real audit shape as
+# _permissions_ok's other users -- stat mode <= a ceiling, Uid 0/root, Gid
+# 0/root -- just a 0600 ceiling for the /etc/crontab file and a 0700
+# ceiling for the five cron.* directories (confirmed against live
+# containers: openssh-server-style packaged defaults are 644/755, i.e.
+# world-readable and non-compliant out of the box, the same gotcha already
+# noted for sshd_config's own file permissions).
+def _evaluate_crontab_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/crontab", 0o600, ("root",))
+
+
+_evidence_crontab_permissions = _evidence_for_stat("/etc/crontab")
+
+
+def _evaluate_cron_hourly_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/cron.hourly", 0o700, ("root",))
+
+
+_evidence_cron_hourly_permissions = _evidence_for_stat("/etc/cron.hourly")
+
+
+def _evaluate_cron_daily_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/cron.daily", 0o700, ("root",))
+
+
+_evidence_cron_daily_permissions = _evidence_for_stat("/etc/cron.daily")
+
+
+def _evaluate_cron_weekly_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/cron.weekly", 0o700, ("root",))
+
+
+_evidence_cron_weekly_permissions = _evidence_for_stat("/etc/cron.weekly")
+
+
+def _evaluate_cron_monthly_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/cron.monthly", 0o700, ("root",))
+
+
+_evidence_cron_monthly_permissions = _evidence_for_stat("/etc/cron.monthly")
+
+
+def _evaluate_cron_d_permissions(facts: SystemFacts) -> bool:
+    return _permissions_ok(facts, "/etc/cron.d", 0o700, ("root",))
+
+
+_evidence_cron_d_permissions = _evidence_for_stat("/etc/cron.d")
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -1449,6 +1563,95 @@ CHECKS = [
         titles=["Ensure the audit configuration is immutable"],
         evaluate=_evaluate_audit_config_immutable,
         evidence=_evidence_audit_config_immutable,
+    ),
+    # Group H: sudoers + cron file permissions.
+    Check(
+        titles=["Ensure sudo log file exists"],
+        evaluate=_evaluate_sudo_log_file_exists,
+        evidence=_evidence_sudo_log_file_exists,
+    ),
+    Check(
+        # "...for privilege escalation" (debian_linux_11, ubuntu_linux_20_04)
+        # vs "...for escalation" (debian_linux_12/13, ubuntu_linux_22_04/
+        # 24_04) -- same NOPASSWD-in-sudoers audit under both titles.
+        titles=[
+            "Ensure users must provide password for privilege escalation",
+            "Ensure users must provide password for escalation",
+        ],
+        evaluate=_evaluate_sudo_no_nopasswd,
+        evidence=_evidence_sudo_no_nopasswd,
+    ),
+    Check(
+        titles=["Ensure re-authentication for privilege escalation is not disabled globally"],
+        evaluate=_evaluate_sudo_reauthentication_required,
+        evidence=_evidence_sudo_reauthentication_required,
+    ),
+    # "Ensure sudo authentication timeout is configured[...]" (5.2.6) was
+    # looked at and dropped: debian_linux_11/12/13 and ubuntu_linux_22_04/
+    # 24_04 all primarily grep timestamp_timeout= out of /etc/sudoers* (a
+    # static text check we could do), but ubuntu_linux_20_04's audit text
+    # for the *same* control is written entirely around `sudo -V | grep
+    # "Authentication timestamp timeout:"` -- no /etc/sudoers* grep at all
+    # -- with no static fallback. facts.py deliberately never runs a
+    # config-independent live command like `sudo -V` (see module docstring
+    # and facts.py's own comments), so this control can't be resolved
+    # correctly for all 6 real target documents from the current
+    # SystemFacts snapshot. Dropped rather than guessing at ubuntu_20_04's
+    # runtime default.
+    Check(
+        titles=[
+            "Ensure access to /etc/crontab is configured",
+            "Ensure permissions on /etc/crontab are configured",
+        ],
+        evaluate=_evaluate_crontab_permissions,
+        evidence=_evidence_crontab_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/cron.hourly is configured",
+            "Ensure permissions on /etc/cron.hourly are configured",
+        ],
+        evaluate=_evaluate_cron_hourly_permissions,
+        evidence=_evidence_cron_hourly_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/cron.daily is configured",
+            "Ensure permissions on /etc/cron.daily are configured",
+        ],
+        evaluate=_evaluate_cron_daily_permissions,
+        evidence=_evidence_cron_daily_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/cron.weekly is configured",
+            "Ensure permissions on /etc/cron.weekly are configured",
+        ],
+        evaluate=_evaluate_cron_weekly_permissions,
+        evidence=_evidence_cron_weekly_permissions,
+    ),
+    Check(
+        titles=[
+            "Ensure access to /etc/cron.monthly is configured",
+            "Ensure permissions on /etc/cron.monthly are configured",
+        ],
+        evaluate=_evaluate_cron_monthly_permissions,
+        evidence=_evidence_cron_monthly_permissions,
+    ),
+    Check(
+        # /etc/cron.d's external_id itself drifts (2.4.1.7 in
+        # debian_linux_11, which has no cron.yearly control; 2.4.1.8 in
+        # every other real target document, which inserts a cron.yearly
+        # control -- not implemented here, not one of this group's
+        # assigned paths -- at 2.4.1.7 first). Title-based lookup makes
+        # that irrelevant to the Check itself; see test_assess_target.py's
+        # _SYSTEMIC_GAPS handling for where it does matter.
+        titles=[
+            "Ensure access to /etc/cron.d is configured",
+            "Ensure permissions on /etc/cron.d are configured",
+        ],
+        evaluate=_evaluate_cron_d_permissions,
+        evidence=_evidence_cron_d_permissions,
     ),
 ]
 
