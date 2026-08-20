@@ -32,6 +32,15 @@ def _assert_fails_only(findings, expected_failing_ids):
     statuses = {f.external_id: f.status for f in findings}
     assert len(statuses) == len(CHECKS)
     for external_id in expected_failing_ids:
+        # Not every gap id necessarily applies to every document: section
+        # numbering drifts between the debian_11/ubuntu_20_04 CIS documents
+        # backing these targets (confirmed for the Group I audit-file-
+        # ownership controls -- debian_11 numbers them 6.4.x, ubuntu_20_04
+        # numbers the same controls 6.3.x), so _SYSTEMIC_GAPS carries both
+        # id variants and this loop only asserts FAIL for whichever variant
+        # is actually present in this target's findings.
+        if external_id not in statuses:
+            continue
         assert statuses[external_id] == "FAIL", f"expected {external_id} to FAIL, got {statuses[external_id]}"
     assert all(
         status == "PASS" for eid, status in statuses.items() if eid not in expected_failing_ids
@@ -50,7 +59,48 @@ def _assert_fails_only(findings, expected_failing_ids):
 # as-is rather than editing the shared Dockerfiles while other agents are
 # actively using these same live containers in parallel; worth a follow-up
 # to harden the images.
-_SYSTEMIC_GAPS = {"5.1.1", "5.1.6", "5.1.8", "5.3.2.2", "5.3.2.3", "5.3.2.4", "5.3.3.4.1", "5.4.3.3"}
+_SYSTEMIC_GAPS = {
+    "5.1.1",
+    "5.1.6",
+    "5.1.8",
+    "5.3.2.2",
+    "5.3.2.3",
+    "5.3.2.4",
+    "5.3.3.4.1",
+    "5.4.3.3",
+    # Group I: auditd config/tooling file ownership + rules immutability.
+    # None of the 6 Dockerfiles install auditd at all (confirmed: `dpkg -s
+    # auditd` fails, /etc/audit and /sbin/auditctl don't exist on all 6 live
+    # containers), so every one of these 5 new checks fails closed on every
+    # live demo target -- same "real, systemic, not a bug in any check"
+    # story as the existing gaps above, just discovered by this group
+    # instead. Unlike the section-5.x gaps above, each of our 6 targets maps
+    # to a genuinely different CIS document (debian_11/12/13,
+    # ubuntu_20_04/22_04/24_04, confirmed via each container's
+    # /etc/os-release) and this section's numbering isn't shared across all
+    # of them the way section 5.x happened to be -- debian_11 uses 6.4.x,
+    # everything else uses 6.2.x/6.3.x, and even within that the "immutable"
+    # control's id differs per document. So every distinct id (verified via
+    # Postgres) is listed below; _assert_fails_only skips whichever ids
+    # aren't present for a given target's document.
+    "6.4.4.6",  # debian_11: Ensure audit configuration files owner is configured
+    "6.3.4.6",  # ubuntu_20_04: same control
+    "6.2.4.6",  # debian_12/13, ubuntu_22_04/24_04: same control
+    "6.4.4.7",  # debian_11: Ensure audit configuration files group owner is configured
+    "6.3.4.7",  # ubuntu_20_04: same control
+    "6.2.4.7",  # debian_12/13, ubuntu_22_04/24_04: same control
+    "6.4.4.9",  # debian_11: Ensure audit tools owner is configured
+    "6.3.4.9",  # ubuntu_20_04: same control
+    "6.2.4.9",  # debian_12/13, ubuntu_22_04/24_04: same control
+    "6.4.4.10",  # debian_11: Ensure audit tools group owner is configured
+    "6.3.4.10",  # ubuntu_20_04: same control
+    "6.2.4.10",  # debian_12/13, ubuntu_22_04/24_04: same control
+    "6.4.3.20",  # debian_11: Ensure the audit configuration is immutable
+    "6.3.3.20",  # ubuntu_20_04: same control
+    "6.2.3.29",  # debian_12, ubuntu_24_04: same control
+    "6.2.3.36",  # debian_13: same control
+    "6.2.3.20",  # ubuntu_22_04: same control
+}
 
 
 def test_assess_debian_baseline_fails_only_sshd_config_permissions():
