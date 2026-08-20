@@ -19,7 +19,12 @@ from invariant.assessment import (
     _evaluate_pam_faillock_enabled,
     _evaluate_pam_no_nullok,
     _evaluate_pam_pwhistory_enabled,
+    _evaluate_pam_pwhistory_use_authtok,
     _evaluate_pam_pwquality_enabled,
+    _evaluate_pam_unix_enabled,
+    _evaluate_pam_unix_no_remember,
+    _evaluate_pam_unix_strong_password_hashing,
+    _evaluate_pam_unix_use_authtok,
     _evaluate_passwd_accounts_use_shadowed_passwords,
     _evaluate_prelink_not_installed,
     _evaluate_root_only_gid0_account,
@@ -34,13 +39,16 @@ from invariant.assessment import (
     _evaluate_ssh_kex_algorithms,
     _evaluate_ssh_log_level,
     _evaluate_ssh_login_grace_time,
+    _evaluate_ssh_macs,
     _evaluate_ssh_max_sessions,
+    _evaluate_ssh_max_startups,
     _evaluate_ssh_permit_root_login,
     _evaluate_ssh_permit_user_environment,
     _evaluate_ssh_private_host_key_permissions,
     _evaluate_ssh_public_host_key_permissions,
     _evaluate_ssh_use_pam,
     _evaluate_sshd_config_permissions,
+    _evaluate_strong_password_hashing_algorithm,
     _evaluate_talk_client_not_installed,
     _evaluate_telnet_client_not_installed,
     _evaluate_x_window_not_installed,
@@ -60,14 +68,17 @@ def _facts(
     pam_common_password="",
     pam_common_account="",
     login_defs_text="",
+    pwhistory_text="",
     installed_packages=None,
+    os_id="debian",
+    os_version_id="11",
 ) -> SystemFacts:
     stats = dict(file_stats or {})
     if shadow_stat:
         stats["/etc/shadow"] = shadow_stat
     return SystemFacts(
-        os_id="debian",
-        os_version_id="11",
+        os_id=os_id,
+        os_version_id=os_version_id,
         sshd_config=sshd_config or {},
         file_stats=stats,
         passwd_text=passwd_text,
@@ -77,6 +88,7 @@ def _facts(
         pam_common_password=pam_common_password,
         pam_common_account=pam_common_account,
         login_defs_text=login_defs_text,
+        pwhistory_text=pwhistory_text,
         installed_packages=installed_packages or set(),
     )
 
@@ -733,3 +745,182 @@ def test_prelink_evaluator_passes_when_absent():
 def test_prelink_evaluator_fails_when_installed():
     facts = _facts(installed_packages={"prelink"})
     assert _evaluate_prelink_not_installed(facts) is False
+
+
+def test_macs_evaluator_passes_with_only_strong_macs():
+    facts = _facts(sshd_config={"macs": "hmac-sha2-512-etm@openssh.com,hmac-sha2-256"})
+    assert _evaluate_ssh_macs(facts) is True
+
+
+def test_macs_evaluator_fails_with_umac_64():
+    """umac-64@openssh.com is part of OpenSSH's own stock default MACs
+    list, which is exactly what CIS's audit flags as weak."""
+    facts = _facts(sshd_config={"macs": "hmac-sha2-512-etm@openssh.com,umac-64@openssh.com"})
+    assert _evaluate_ssh_macs(facts) is False
+
+
+def test_macs_evaluator_fails_with_hmac_md5():
+    facts = _facts(sshd_config={"macs": "hmac-md5"})
+    assert _evaluate_ssh_macs(facts) is False
+
+
+def test_macs_evaluator_fails_when_directive_missing():
+    assert _evaluate_ssh_macs(_facts()) is False
+
+
+def test_max_startups_evaluator_passes_at_10_30_60():
+    assert _evaluate_ssh_max_startups(_facts(sshd_config={"maxstartups": "10:30:60"})) is True
+
+
+def test_max_startups_evaluator_passes_more_restrictive():
+    assert _evaluate_ssh_max_startups(_facts(sshd_config={"maxstartups": "5:20:40"})) is True
+
+
+def test_max_startups_evaluator_fails_when_full_exceeds_60():
+    """Matches OpenSSH's own stock default of 10:30:100 -- confirmed
+    against a stock container with no sshd_config hardening applied."""
+    assert _evaluate_ssh_max_startups(_facts(sshd_config={"maxstartups": "10:30:100"})) is False
+
+
+def test_max_startups_evaluator_fails_when_directive_missing():
+    assert _evaluate_ssh_max_startups(_facts()) is False
+
+
+def test_max_startups_evaluator_fails_on_malformed_value():
+    assert _evaluate_ssh_max_startups(_facts(sshd_config={"maxstartups": "30"})) is False
+
+
+def test_strong_password_hashing_algorithm_evaluator_passes_on_sha512():
+    facts = _facts(login_defs_text="ENCRYPT_METHOD SHA512")
+    assert _evaluate_strong_password_hashing_algorithm(facts) is True
+
+
+def test_strong_password_hashing_algorithm_evaluator_passes_on_yescrypt():
+    facts = _facts(login_defs_text="ENCRYPT_METHOD yescrypt")
+    assert _evaluate_strong_password_hashing_algorithm(facts) is True
+
+
+def test_strong_password_hashing_algorithm_evaluator_fails_on_md5():
+    facts = _facts(login_defs_text="ENCRYPT_METHOD MD5")
+    assert _evaluate_strong_password_hashing_algorithm(facts) is False
+
+
+def test_strong_password_hashing_algorithm_evaluator_fails_when_missing():
+    assert _evaluate_strong_password_hashing_algorithm(_facts()) is False
+
+
+def test_pam_unix_enabled_evaluator_passes_when_present_in_all_three_files():
+    facts = _facts(
+        pam_common_auth="auth [success=1 default=ignore] pam_unix.so",
+        pam_common_account="account [success=1 default=ignore] pam_unix.so",
+        pam_common_password="password [success=1 default=ignore] pam_unix.so obscure yescrypt",
+    )
+    assert _evaluate_pam_unix_enabled(facts) is True
+
+
+def test_pam_unix_enabled_evaluator_fails_when_missing_from_one_file():
+    facts = _facts(
+        pam_common_auth="auth [success=1 default=ignore] pam_unix.so",
+        pam_common_account="account requisite pam_deny.so",
+        pam_common_password="password [success=1 default=ignore] pam_unix.so obscure yescrypt",
+    )
+    assert _evaluate_pam_unix_enabled(facts) is False
+
+
+def test_pam_unix_enabled_evaluator_fails_when_absent_everywhere():
+    assert _evaluate_pam_unix_enabled(_facts()) is False
+
+
+def test_pam_unix_no_remember_evaluator_passes_when_absent():
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so obscure yescrypt")
+    assert _evaluate_pam_unix_no_remember(facts) is True
+
+
+def test_pam_unix_no_remember_evaluator_fails_when_present():
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so remember=5 yescrypt")
+    assert _evaluate_pam_unix_no_remember(facts) is False
+
+
+def test_pam_unix_no_remember_evaluator_ignores_remember_on_unrelated_module():
+    """remember belongs on pam_pwhistory.so -- only a remember= argument on
+    the pam_unix.so line itself is a finding."""
+    facts = _facts(pam_common_password="password requisite pam_pwhistory.so remember=24\npassword [success=1] pam_unix.so yescrypt")
+    assert _evaluate_pam_unix_no_remember(facts) is True
+
+
+def test_pam_unix_strong_password_hashing_evaluator_passes_on_yescrypt():
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so obscure yescrypt")
+    assert _evaluate_pam_unix_strong_password_hashing(facts) is True
+
+
+def test_pam_unix_strong_password_hashing_evaluator_passes_on_sha512():
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so obscure sha512")
+    assert _evaluate_pam_unix_strong_password_hashing(facts) is True
+
+
+def test_pam_unix_strong_password_hashing_evaluator_fails_when_absent():
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so obscure")
+    assert _evaluate_pam_unix_strong_password_hashing(facts) is False
+
+
+def test_pam_unix_strong_password_hashing_evaluator_ubuntu_20_04_rejects_yescrypt():
+    """ubuntu_linux_20_04's real audit text only accepts sha512, not
+    yescrypt, unlike every other real target document -- confirmed via
+    Postgres."""
+    facts = _facts(
+        pam_common_password="password [success=1 default=ignore] pam_unix.so obscure yescrypt",
+        os_id="ubuntu",
+        os_version_id="20.04",
+    )
+    assert _evaluate_pam_unix_strong_password_hashing(facts) is False
+
+
+def test_pam_unix_strong_password_hashing_evaluator_ubuntu_20_04_accepts_sha512():
+    facts = _facts(
+        pam_common_password="password [success=1 default=ignore] pam_unix.so obscure sha512",
+        os_id="ubuntu",
+        os_version_id="20.04",
+    )
+    assert _evaluate_pam_unix_strong_password_hashing(facts) is True
+
+
+def test_pam_unix_use_authtok_evaluator_passes_when_present():
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so obscure use_authtok yescrypt")
+    assert _evaluate_pam_unix_use_authtok(facts) is True
+
+
+def test_pam_unix_use_authtok_evaluator_fails_when_absent():
+    """Matches OpenSSH/PAM's own stock default pam_unix.so line -- confirmed
+    against a stock container with no PAM hardening applied."""
+    facts = _facts(pam_common_password="password [success=1 default=ignore] pam_unix.so obscure yescrypt")
+    assert _evaluate_pam_unix_use_authtok(facts) is False
+
+
+def test_pam_unix_use_authtok_evaluator_fails_when_directive_missing():
+    assert _evaluate_pam_unix_use_authtok(_facts()) is False
+
+
+def test_pam_pwhistory_use_authtok_evaluator_passes_via_common_password_line():
+    facts = _facts(
+        pam_common_password="password requisite pam_pwhistory.so remember=24 enforce_for_root use_authtok"
+    )
+    assert _evaluate_pam_pwhistory_use_authtok(facts) is True
+
+
+def test_pam_pwhistory_use_authtok_evaluator_passes_via_pwhistory_conf():
+    """Newer, pam-configs-driven layout (debian_linux_13/ubuntu_linux_24_04):
+    use_authtok can instead be set directly in pwhistory.conf."""
+    facts = _facts(
+        pam_common_password="password requisite pam_pwhistory.so remember=24",
+        pwhistory_text="use_authtok",
+    )
+    assert _evaluate_pam_pwhistory_use_authtok(facts) is True
+
+
+def test_pam_pwhistory_use_authtok_evaluator_fails_when_absent_from_both():
+    facts = _facts(pam_common_password="password requisite pam_pwhistory.so remember=24")
+    assert _evaluate_pam_pwhistory_use_authtok(facts) is False
+
+
+def test_pam_pwhistory_use_authtok_evaluator_fails_when_pwhistory_not_configured():
+    assert _evaluate_pam_pwhistory_use_authtok(_facts()) is False

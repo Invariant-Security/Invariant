@@ -697,6 +697,211 @@ def _evidence_prelink_not_installed(facts: SystemFacts) -> str:
     return f"installed_packages: prelink {'present' if present else 'absent'}"
 
 
+# Group F: remaining sshd_config directives (MACs, MaxStartups) + PAM/
+# login.defs checks (pam_unix module family, pam_pwhistory use_authtok,
+# login.defs password hashing algorithm). Two assigned candidates were
+# dropped -- see the final summary below the CHECKS list.
+
+# MACs flagged "weak" by the real CIS audit regex (control 5.1.15/5.1.16):
+# broken/short-digest HMACs and the umac-64 family, with or without
+# Encrypt-Then-Mac -- same "flagged unconditionally regardless of patch
+# level" posture as _WEAK_CIPHER_RE above (CVE-2023-48795 note applies to
+# the etm variants here too).
+_WEAK_MACS = {
+    "hmac-md5",
+    "hmac-md5-96",
+    "hmac-ripemd160",
+    "hmac-sha1-96",
+    "umac-64@openssh.com",
+    "hmac-md5-etm@openssh.com",
+    "hmac-md5-96-etm@openssh.com",
+    "hmac-ripemd160-etm@openssh.com",
+    "hmac-sha1-96-etm@openssh.com",
+    "umac-64-etm@openssh.com",
+    "umac-128-etm@openssh.com",
+}
+
+
+def _evaluate_ssh_macs(facts: SystemFacts) -> bool:
+    macs = facts.sshd_config.get("macs", "")
+    if not macs:
+        return False
+    algorithms = {m.strip().lower() for m in macs.split(",")}
+    return not (algorithms & _WEAK_MACS)
+
+
+def _evidence_ssh_macs(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("macs", "<not set>")
+    return f"sshd_config: MACs {value}"
+
+
+def _evaluate_ssh_max_startups(facts: SystemFacts) -> bool:
+    """Real audit (control 5.1.17/5.1.18/5.1.19): `sshd -T | awk '$1 ~
+    /^\\s*maxstartups/{split($2, a, ":");{if(a[1] > 10 || a[2] > 30 ||
+    a[3] > 60) print $0}}'` must return nothing -- MaxStartups'
+    "start:rate:full" triple must be 10:30:60 or more restrictive in every
+    field. `sshd -T` always reports it as that colon-separated triple.
+    """
+    value = facts.sshd_config.get("maxstartups", "")
+    parts = value.split(":")
+    if len(parts) != 3:
+        return False
+    try:
+        start, rate, full = (int(p) for p in parts)
+    except ValueError:
+        return False
+    return start <= 10 and rate <= 30 and full <= 60
+
+
+def _evidence_ssh_max_startups(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("maxstartups", "<not set>")
+    return f"sshd_config: MaxStartups {value}"
+
+
+def _evaluate_strong_password_hashing_algorithm(facts: SystemFacts) -> bool:
+    """Real audit (control 5.4.1.4): `grep -Pi
+    '^\\h*ENCRYPT_METHOD\\h+(SHA512|yescrypt)\\b' /etc/login.defs` -- case
+    insensitive per the audit's own `-i` flag, so the value is upper-cased
+    before comparing rather than requiring an exact-case match.
+    """
+    value = parse_login_defs(facts.login_defs_text).get("ENCRYPT_METHOD", "")
+    return value.upper() in ("SHA512", "YESCRYPT")
+
+
+def _evidence_strong_password_hashing_algorithm(facts: SystemFacts) -> str:
+    value = parse_login_defs(facts.login_defs_text).get("ENCRYPT_METHOD", "<not set>")
+    return f"login.defs: ENCRYPT_METHOD {value}"
+
+
+def _pam_unix_present(text: str) -> bool:
+    return any("pam_unix.so" in line for line in text.splitlines())
+
+
+def _evaluate_pam_unix_enabled(facts: SystemFacts) -> bool:
+    """Real audit (control 5.3.2.1): `grep pam_unix.so /etc/pam.d/common-
+    {account,auth,password,session[,session-noninteractive]}` -- pam_unix.so
+    must show up in every file in that list (4 files on debian_linux_11,
+    5 on every other real target document, which also lists
+    common-session-noninteractive). facts.SystemFacts collects
+    common-auth/common-account/common-password but not common-session or
+    common-session-noninteractive -- same collection gap already called
+    out for _pam_unix_nullok_lines above -- so this checks the 3 available
+    files, a safe subset of the real 4-5 file audit.
+    """
+    return (
+        _pam_unix_present(facts.pam_common_auth)
+        and _pam_unix_present(facts.pam_common_account)
+        and _pam_unix_present(facts.pam_common_password)
+    )
+
+
+def _evidence_pam_unix_enabled(facts: SystemFacts) -> str:
+    auth = "present" if _pam_unix_present(facts.pam_common_auth) else "missing"
+    account = "present" if _pam_unix_present(facts.pam_common_account) else "missing"
+    password = "present" if _pam_unix_present(facts.pam_common_password) else "missing"
+    return f"pam_unix.so: common-auth={auth}, common-account={account}, common-password={password}"
+
+
+_REMEMBER_RE = re.compile(r"\bremember=\d+\b")
+
+
+def _pam_unix_remember_lines(facts: SystemFacts) -> list[str]:
+    """Lines across common-auth/common-password/common-account that
+    configure pam_unix.so with a remember= argument -- remember belongs on
+    pam_pwhistory.so (password history), not pam_unix.so. Real audit
+    (control 5.3.3.4.2) also checks common-session/common-session-
+    noninteractive, which facts.py doesn't collect -- same gap as
+    _pam_unix_nullok_lines above.
+    """
+    offending = []
+    for text in (facts.pam_common_auth, facts.pam_common_password, facts.pam_common_account):
+        for line in text.splitlines():
+            if "pam_unix.so" in line and _REMEMBER_RE.search(line):
+                offending.append(line.strip())
+    return offending
+
+
+def _evaluate_pam_unix_no_remember(facts: SystemFacts) -> bool:
+    return len(_pam_unix_remember_lines(facts)) == 0
+
+
+def _evidence_pam_unix_no_remember(facts: SystemFacts) -> str:
+    lines = _pam_unix_remember_lines(facts)
+    if not lines:
+        return "no remember= found on pam_unix.so lines in common-auth/common-password/common-account"
+    return "remember= found: " + " | ".join(lines)
+
+
+def _pam_unix_password_lines(facts: SystemFacts) -> list[str]:
+    return [line.strip() for line in facts.pam_common_password.splitlines() if "pam_unix.so" in line]
+
+
+def _evaluate_pam_unix_strong_password_hashing(facts: SystemFacts) -> bool:
+    """Real audit (control 5.3.3.4.3): `grep -PH '^\\h*password\\h+
+    ([^#\\n\\r]+)\\h+pam_unix\\.so\\h+([^#\\n\\r]+\\h+)?(sha512|yescrypt)\\b'
+    /etc/pam.d/common-password`. ubuntu_linux_20_04's audit text is
+    narrower here -- it only accepts sha512, not yescrypt (confirmed via
+    Postgres) -- so that one real document is branched on explicitly using
+    facts.os_id/os_version_id (already collected, not a new field); every
+    other real target document accepts both.
+    """
+    lines = _pam_unix_password_lines(facts)
+    has_sha512 = any("sha512" in line.lower() for line in lines)
+    has_yescrypt = any("yescrypt" in line.lower() for line in lines)
+    if facts.os_id == "ubuntu" and facts.os_version_id == "20.04":
+        return has_sha512
+    return has_sha512 or has_yescrypt
+
+
+def _evidence_pam_unix_strong_password_hashing(facts: SystemFacts) -> str:
+    lines = _pam_unix_password_lines(facts)
+    return "common-password pam_unix.so line(s): " + (" | ".join(lines) if lines else "<none>")
+
+
+def _evaluate_pam_unix_use_authtok(facts: SystemFacts) -> bool:
+    """Real audit (control 5.3.3.4.4): `grep -PH '^\\h*password\\h+
+    ([^#\\n\\r]+)\\h+pam_unix\\.so\\h+([^#\\n\\r]+\\h+)?use_authtok\\b'
+    /etc/pam.d/common-password` -- identical wording across every real
+    target document, unlike the hashing-algorithm control above.
+    """
+    return any("use_authtok" in line for line in _pam_unix_password_lines(facts))
+
+
+def _evidence_pam_unix_use_authtok(facts: SystemFacts) -> str:
+    lines = _pam_unix_password_lines(facts)
+    return "common-password pam_unix.so line(s): " + (" | ".join(lines) if lines else "<none>")
+
+
+def _evaluate_pam_pwhistory_use_authtok(facts: SystemFacts) -> bool:
+    """Real audit (control 5.3.3.3.3): either the pam_pwhistory.so line in
+    /etc/pam.d/common-password carries use_authtok, OR (the newer,
+    pam-configs-driven layout used by debian_linux_13/ubuntu_linux_24_04)
+    /etc/security/pwhistory.conf sets use_authtok directly -- either
+    location satisfies the control, matching the real audit's own "- OR/IF
+    -" wording. facts.pwhistory_text (pwhistory.conf) is already collected
+    for the sibling "pam_pwhistory module is enabled" family.
+    """
+    pwhistory_lines = [line for line in facts.pam_common_password.splitlines() if "pam_pwhistory.so" in line]
+    if any("use_authtok" in line for line in pwhistory_lines):
+        return True
+    for line in facts.pwhistory_text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("use_authtok"):
+            return True
+    return False
+
+
+def _evidence_pam_pwhistory_use_authtok(facts: SystemFacts) -> str:
+    pwhistory_lines = [line.strip() for line in facts.pam_common_password.splitlines() if "pam_pwhistory.so" in line]
+    conf_active = [
+        line.strip() for line in facts.pwhistory_text.splitlines() if line.strip().lower().startswith("use_authtok")
+    ]
+    return (
+        f"common-password pam_pwhistory.so line(s): {' | '.join(pwhistory_lines) or '<none>'}; "
+        f"pwhistory.conf use_authtok: {'set' if conf_active else 'not set'}"
+    )
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -1031,6 +1236,67 @@ CHECKS = [
         titles=["Ensure prelink is not installed"],
         evaluate=_evaluate_prelink_not_installed,
         evidence=_evidence_prelink_not_installed,
+    ),
+    # Group F: remaining sshd_config directives + PAM/login.defs checks.
+    # Two assigned candidates were dropped -- title/semantics didn't hold
+    # up across all 6 real documents:
+    #   - "Ensure root user umask is configured": the real audit greps
+    #     `/root/.bash_profile`, `/root/.bashrc` (and, on debian_12/13 +
+    #     ubuntu_22_04/24_04, `/root/.profile` instead of .bash_profile)
+    #     for a umask line -- never /etc/login.defs or /etc/pam.d/login,
+    #     confirmed via Postgres audit text on every document. facts.py
+    #     collects neither root shell rc file, so this control can't be
+    #     evaluated from existing SystemFacts without adding a new field,
+    #     contrary to this group's assigned "zero new facts" scope --
+    #     left for a future group to add the collection field deliberately
+    #     rather than bolted on here as a side effect.
+    #   - "Ensure root account access is controlled": resolves in 5 of 6
+    #     documents (missing from debian_linux_11) with audit text "root
+    #     password is either set (P) or locked (L)" via `passwd -S root`.
+    #     debian_linux_11's nearest control at the same position (5.4.2.4)
+    #     is "Ensure root password is set" instead -- a *stricter*, only
+    #     partially-overlapping condition (P only, L is not accepted) --
+    #     not a wording variant of the same control, so merging its title
+    #     in would silently loosen debian_linux_11's real pass condition.
+    Check(
+        titles=["Ensure sshd MACs are configured"],
+        evaluate=_evaluate_ssh_macs,
+        evidence=_evidence_ssh_macs,
+    ),
+    Check(
+        titles=["Ensure sshd MaxStartups is configured"],
+        evaluate=_evaluate_ssh_max_startups,
+        evidence=_evidence_ssh_max_startups,
+    ),
+    Check(
+        titles=["Ensure strong password hashing algorithm is configured"],
+        evaluate=_evaluate_strong_password_hashing_algorithm,
+        evidence=_evidence_strong_password_hashing_algorithm,
+    ),
+    Check(
+        titles=["Ensure pam_unix module is enabled"],
+        evaluate=_evaluate_pam_unix_enabled,
+        evidence=_evidence_pam_unix_enabled,
+    ),
+    Check(
+        titles=["Ensure pam_unix does not include remember"],
+        evaluate=_evaluate_pam_unix_no_remember,
+        evidence=_evidence_pam_unix_no_remember,
+    ),
+    Check(
+        titles=["Ensure pam_unix includes a strong password hashing algorithm"],
+        evaluate=_evaluate_pam_unix_strong_password_hashing,
+        evidence=_evidence_pam_unix_strong_password_hashing,
+    ),
+    Check(
+        titles=["Ensure pam_unix includes use_authtok"],
+        evaluate=_evaluate_pam_unix_use_authtok,
+        evidence=_evidence_pam_unix_use_authtok,
+    ),
+    Check(
+        titles=["Ensure pam_pwhistory includes use_authtok"],
+        evaluate=_evaluate_pam_pwhistory_use_authtok,
+        evidence=_evidence_pam_pwhistory_use_authtok,
     ),
 ]
 
