@@ -11,6 +11,19 @@ from pathlib import Path
 DEFAULT_RAW_DIR = Path(__file__).resolve().parents[3] / "data" / "raw"
 
 
+def _cis_os_family(document: str) -> str | None:
+    """Map a CIS document slug to its OS subdirectory (data/raw/cis/<family>/).
+
+    Returns None for documents that aren't OS-specific (or aren't CIS),
+    so save_raw_artifact() falls back to no subdivision for those.
+    """
+    if document.startswith("debian_linux"):
+        return "debian"
+    if document.startswith("ubuntu_linux"):
+        return "ubuntu"
+    return None
+
+
 @dataclass
 class RawArtifact:
     """A preserved raw document, with the metadata needed to trace it back
@@ -40,12 +53,17 @@ def save_raw_artifact(
     Filenames are content-addressed by hash (not by download timestamp) so
     re-fetching identical bytes never creates a duplicate file.
     """
-    raw_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = raw_dir / source
+    os_family = _cis_os_family(document) if source == "cis" else None
+    if os_family is not None:
+        target_dir = target_dir / os_family
+    target_dir.mkdir(parents=True, exist_ok=True)
+
     content_hash = hashlib.sha256(content).hexdigest()
     retrieved_at = datetime.now(timezone.utc).isoformat()
 
     stem = f"{source}_{document}_{version}_{content_hash[:12]}"
-    artifact_path = raw_dir / f"{stem}.{extension}"
+    artifact_path = target_dir / f"{stem}.{extension}"
     artifact_path.write_bytes(content)
 
     artifact = RawArtifact(
@@ -56,7 +74,7 @@ def save_raw_artifact(
         retrieved_at=retrieved_at,
         path=str(artifact_path),
     )
-    metadata_path = raw_dir / f"{stem}.json"
+    metadata_path = target_dir / f"{stem}.json"
     metadata_path.write_text(json.dumps(asdict(artifact), indent=2))
 
     return artifact

@@ -2,7 +2,42 @@ import hashlib
 import json
 from pathlib import Path
 
-from invariant.collector import save_raw_artifact
+from invariant.collector import _cis_os_family, save_raw_artifact
+
+
+def test_cis_os_family_maps_debian_and_ubuntu_documents():
+    assert _cis_os_family("debian_linux_10") == "debian"
+    assert _cis_os_family("ubuntu_linux_22_04_stig") == "ubuntu"
+
+
+def test_cis_os_family_returns_none_for_unrecognized_document():
+    assert _cis_os_family("aws_foundations") is None
+
+
+def test_save_raw_artifact_nests_ubuntu_documents_under_cis_ubuntu(tmp_path: Path):
+    artifact = save_raw_artifact(
+        b"content",
+        source="cis",
+        document="ubuntu_linux_22_04",
+        version="3.0.0",
+        extension="pdf",
+        raw_dir=tmp_path,
+    )
+
+    assert Path(artifact.path).parent == tmp_path / "cis" / "ubuntu"
+
+
+def test_save_raw_artifact_does_not_nest_by_os_for_non_cis_sources(tmp_path: Path):
+    artifact = save_raw_artifact(
+        b"content",
+        source="aws",
+        document="security_pillar",
+        version="1.0.0",
+        extension="pdf",
+        raw_dir=tmp_path,
+    )
+
+    assert Path(artifact.path).parent == tmp_path / "aws"
 
 
 def test_save_raw_artifact_writes_file_and_hashes_correctly(tmp_path: Path):
@@ -20,7 +55,7 @@ def test_save_raw_artifact_writes_file_and_hashes_correctly(tmp_path: Path):
 
     assert artifact.content_hash == expected_hash
     assert Path(artifact.path).read_bytes() == content
-    assert Path(artifact.path).parent == tmp_path
+    assert Path(artifact.path).parent == tmp_path / "cis" / "debian"
     assert artifact.source == "cis"
     assert artifact.document == "debian_linux_10"
     assert artifact.version == "1.0.0"

@@ -2,7 +2,6 @@
 # Only the documents in source.KNOWN_CIS_DOCUMENTS are wired up so far
 # (same scope as fetch.py).
 
-import glob
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -71,8 +70,10 @@ def _latest_raw_artifact_metadata(*, source: str, document: str) -> dict:
     # "cis_debian_linux_11_*.json" also matches the STIG one (confirmed:
     # this silently returned the wrong artifact until fixed). Glob broadly,
     # then filter on each file's own recorded `source`/`document` fields.
-    pattern = str(DEFAULT_RAW_DIR / f"{source}_*.json")
-    candidates = [json.loads(Path(path).read_text()) for path in sorted(glob.glob(pattern))]
+    # rglob (not glob) since save_raw_artifact() nests CIS artifacts under
+    # data/raw/cis/<debian|ubuntu>/.
+    pattern = f"{source}_*.json"
+    candidates = [json.loads(path.read_text()) for path in sorted(DEFAULT_RAW_DIR.rglob(pattern))]
     matches = [m for m in candidates if m["source"] == source and m["document"] == document]
     if not matches:
         raise FileNotFoundError(

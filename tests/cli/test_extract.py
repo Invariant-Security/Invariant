@@ -25,6 +25,24 @@ def test_latest_raw_artifact_metadata_picks_most_recent(tmp_path, monkeypatch):
     assert metadata["path"] == "newer.pdf"
 
 
+def test_latest_raw_artifact_metadata_finds_files_nested_under_os_subdirectories(tmp_path, monkeypatch):
+    """save_raw_artifact() nests CIS artifacts under cis/<debian|ubuntu>/ --
+    the lookup has to search recursively, not just the top-level raw dir.
+    """
+    monkeypatch.setattr(extract_module, "DEFAULT_RAW_DIR", tmp_path)
+    nested = tmp_path / "cis" / "debian"
+    nested.mkdir(parents=True)
+    metadata = {
+        "source": "cis", "document": "debian_linux_10", "path": "debian.pdf",
+        "retrieved_at": "2026-01-01T00:00:00+00:00",
+    }
+    (nested / "cis_debian_linux_10_1.0.0_aaa.json").write_text(json.dumps(metadata))
+
+    result = extract_module._latest_raw_artifact_metadata(source="cis", document="debian_linux_10")
+
+    assert result["path"] == "debian.pdf"
+
+
 def test_latest_raw_artifact_metadata_does_not_match_by_filename_prefix(tmp_path, monkeypatch):
     """debian_linux_11 is a strict filename prefix of debian_linux_11_stig
     -- regression test for a real bug where glob("*debian_linux_11*")
