@@ -11,10 +11,15 @@ later task once the storage layer's read APIs are designed.
 """
 
 import json
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
+from invariant.config import load_dotenv
+
+load_dotenv()
 
 # src/invariant/api/main.py -> repo root is 4 parents up.
 QUICKDEMO_DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "quickdemo"
@@ -23,11 +28,21 @@ RUNS_PATH = QUICKDEMO_DATA_DIR / "runs.jsonl"
 
 app = FastAPI(title="Invariant quickdemo API")
 
-# Vite's default dev server port (and its 127.0.0.1 equivalent) -- the only
-# consumer of this API so far (Phase D's not-yet-built React page).
+# Vite's default dev server port (and its 127.0.0.1 equivalent) are the
+# default -- a full remote deploy (frontend + API on the same prod server,
+# not just a local demo) sets INVARIANT_API_CORS_ORIGINS to the real
+# frontend origin instead, e.g. "https://demo.example.com". Comma-separated
+# to allow more than one (e.g. staging + prod) without code changes.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+allow_origins = [
+    origin.strip()
+    for origin in os.environ.get("INVARIANT_API_CORS_ORIGINS", _default_origins).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=allow_origins,
     allow_methods=["GET"],
     allow_headers=["*"],
 )

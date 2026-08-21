@@ -1,3 +1,4 @@
+import importlib
 import json
 
 from fastapi.testclient import TestClient
@@ -101,3 +102,25 @@ def test_cors_allows_vite_dev_server_origin():
     )
 
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_cors_origins_configurable_via_env_var(monkeypatch):
+    monkeypatch.setenv("INVARIANT_API_CORS_ORIGINS", "https://prod.example.com, https://staging.example.com")
+    reloaded = importlib.reload(main)
+    try:
+        prod_client = TestClient(reloaded.app)
+
+        allowed = prod_client.options(
+            "/api/quickdemo/status",
+            headers={"Origin": "https://prod.example.com", "Access-Control-Request-Method": "GET"},
+        )
+        assert allowed.headers["access-control-allow-origin"] == "https://prod.example.com"
+
+        dev_default = prod_client.options(
+            "/api/quickdemo/status",
+            headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"},
+        )
+        assert "access-control-allow-origin" not in dev_default.headers
+    finally:
+        monkeypatch.delenv("INVARIANT_API_CORS_ORIGINS", raising=False)
+        importlib.reload(main)

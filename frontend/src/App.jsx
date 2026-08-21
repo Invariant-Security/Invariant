@@ -3,9 +3,9 @@ import './App.css'
 
 // Default `uvicorn invariant.api.main:app --reload` address -- see the
 // frontend README for how to run both the API and this dev server
-// together. Kept as a plain constant (no env-var plumbing) to match the
-// "keep friction low" instruction for this demo tool.
-const API_BASE = 'http://127.0.0.1:8000'
+// together. Overridable via VITE_API_BASE (see .env.example) for a real
+// deploy where the API isn't on localhost:8000, without touching code.
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
 
 // The 9 pipeline steps quickdemo.sh's section() calls announce, in order.
 // The API only reports which steps are *done so far* (status.completed_steps)
