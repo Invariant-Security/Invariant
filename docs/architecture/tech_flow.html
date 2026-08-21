@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Invariant — Stack Flow</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1420;
+    --ink: #eef2f8;
+    --sub: #9aa7bd;
+    --arrow: #4b5670;
+    --card-border: rgba(255,255,255,0.14);
+    --planned-op: 0.45;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f6fb;
+      --ink: #14181f;
+      --sub: #5b6478;
+      --arrow: #b7bfd0;
+      --card-border: rgba(0,0,0,0.08);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  .wrap {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 3.5rem;
+  }
+  h1 {
+    font-size: 1.4rem;
+    letter-spacing: 0.02em;
+    margin: 0 0 0.25rem;
+  }
+  .subtitle {
+    color: var(--sub);
+    font-size: 0.85rem;
+    margin: 0 0 2.5rem;
+  }
+
+  .foundation {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 0.5rem;
+  }
+  .py-badge {
+    background: linear-gradient(135deg, #3776AB 0%, #3776AB 55%, #FFD43B 55%, #FFD43B 100%);
+    color: #fff;
+    font-weight: 700;
+    font-size: 1rem;
+    padding: 0.55rem 1.4rem;
+    border-radius: 999px;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    letter-spacing: 0.03em;
+  }
+  .down-arrow {
+    text-align: center;
+    color: var(--arrow);
+    font-size: 1.3rem;
+    line-height: 1;
+    margin: 0.4rem 0 1.8rem;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-bottom: 0.5rem;
+  }
+  .arrow {
+    color: var(--arrow);
+    font-size: 1.4rem;
+    font-weight: 700;
+    padding: 0 0.1rem;
+  }
+  .arrow.small { font-size: 1.1rem; }
+
+  .stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .stage-label {
+    font-size: 0.62rem;
+    color: var(--sub);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .block {
+    border-radius: 14px;
+    padding: 0.85rem 1.1rem;
+    min-width: 132px;
+    text-align: center;
+    border: 1px solid var(--card-border);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+  }
+  .block .name {
+    font-weight: 700;
+    font-size: 1.05rem;
+    display: block;
+    letter-spacing: 0.01em;
+  }
+  .block .name + .name {
+    margin-top: 0.15rem;
+    font-size: 0.85rem;
+    opacity: 0.9;
+  }
+  .block.planned {
+    opacity: var(--planned-op);
+    border-style: dashed;
+    box-shadow: none;
+  }
+
+  /* brand-ish colors */
+  .c-httpx   { background: #b1064f; color: #fff; }
+  .c-playwright { background: #2ead33; color: #fff; }
+  .c-pypdf   { background: #b3121a; color: #fff; }
+  .c-psycopg { background: #2d5f8b; color: #fff; }
+  .c-postgres{ background: #336791; color: #fff; }
+  .c-alembic { background: #7a1f2b; color: #fff; }
+  .c-typer   { background: #0e8f8a; color: #fff; }
+  .c-fastapi { background: #009688; color: #fff; }
+  .c-uvicorn { background: #6e40c9; color: #fff; }
+  .c-docker  { background: #2496ed; color: #fff; }
+  .c-react   { background: #61dafb; color: #06222b; }
+  .c-pytest  { background: #0a9edc; color: #fff; }
+
+  .lane-title {
+    text-align: center;
+    color: var(--sub);
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin: 2.4rem 0 1rem;
+  }
+
+  .footnote {
+    text-align: center;
+    color: var(--sub);
+    font-size: 0.72rem;
+    margin-top: 2.6rem;
+    line-height: 1.6;
+  }
+  .footnote .pytest-chip {
+    display: inline-block;
+    background: #0a9edc;
+    color: #fff;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    margin: 0 0.15rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Invariant — fluxo de tecnologias</h1>
+  <p class="subtitle">bibliotecas/ferramentas reais em uso (pyproject.toml + infra), em ordem de pipeline</p>
+
+  <div class="foundation">
+    <div class="py-badge">PYTHON 3.11+</div>
+  </div>
+  <div class="down-arrow">↓</div>
+
+  <div class="row">
+
+    <div class="stage">
+      <span class="stage-label">collector</span>
+      <div class="block c-httpx">
+        <span class="name">httpx</span>
+        <span class="name">Playwright</span>
+      </div>
+    </div>
+
+    <span class="arrow">→</span>
+
+    <div class="stage">
+      <span class="stage-label">extractor</span>
+      <div class="block c-pypdf">
+        <span class="name">pypdf</span>
+      </div>
+    </div>
+
+    <span class="arrow">→</span>
+
+    <div class="stage">
+      <span class="stage-label">storage</span>
+      <div class="block c-postgres">
+        <span class="name">psycopg</span>
+        <span class="name">PostgreSQL</span>
+      </div>
+    </div>
+
+    <span class="arrow">→</span>
+
+    <div class="stage">
+      <span class="stage-label">migrations</span>
+      <div class="block c-alembic">
+        <span class="name">Alembic</span>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="row">
+
+    <div class="stage">
+      <span class="stage-label">operator cli</span>
+      <div class="block c-typer">
+        <span class="name">Typer</span>
+      </div>
+    </div>
+
+    <span class="arrow">→</span>
+
+    <div class="stage">
+      <span class="stage-label">rest api</span>
+      <div class="block c-fastapi">
+        <span class="name">FastAPI</span>
+        <span class="name">Uvicorn</span>
+      </div>
+    </div>
+
+    <span class="arrow">→</span>
+
+    <div class="stage">
+      <span class="stage-label">frontend (planejado)</span>
+      <div class="block c-react planned">
+        <span class="name">React</span>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="lane-title">assessment — checks contra máquinas reais</div>
+
+  <div class="row">
+    <div class="stage">
+      <span class="stage-label">targets</span>
+      <div class="block c-docker">
+        <span class="name">Docker</span>
+      </div>
+    </div>
+
+    <span class="arrow small">→</span>
+
+    <div class="stage">
+      <span class="stage-label">80 checks</span>
+      <div class="block" style="background:#3a3f4d; color:#fff;">
+        <span class="name">stdlib</span>
+      </div>
+    </div>
+
+    <span class="arrow small">→</span>
+
+    <div class="stage">
+      <span class="stage-label">findings</span>
+      <div class="block c-postgres">
+        <span class="name">PostgreSQL</span>
+      </div>
+    </div>
+  </div>
+
+  <p class="footnote">
+    todas as etapas cobertas por <span class="pytest-chip">pytest</span> —
+    quadros tracejados = existe no desenho, ainda não implementado.
+  </p>
+</div>
+</body>
+</html>

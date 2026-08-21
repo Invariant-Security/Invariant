@@ -3,20 +3,34 @@
 # Document Version -> Evidence chain printed for every FAIL, per bxsec.md
 # sec. 6 ("don't stop at 'HIGH, SSH insecure' -- show why").
 
+from typing import Optional
+
+import typer
+
 from invariant import assessment
 
 
-def assess():
-    results = assessment.assess_all()
+def assess(
+    target: Optional[list[str]] = typer.Option(
+        None,
+        "--target",
+        help=(
+            "Container name to assess (repeatable, e.g. --target foo --target bar). "
+            "Defaults to assessment.TARGETS (the 6 dev/test containers) when omitted."
+        ),
+    ),
+):
+    targets = list(target) if target else assessment.TARGETS
+    results = assessment.assess_targets(targets)
 
     print("Invariant Assessment")
     print("-" * 60)
     total_findings = 0
-    for target, findings in results.items():
+    for container, findings in results.items():
         fails = [f for f in findings if f.status == "FAIL"]
         total_findings += len(fails)
         symbol = "PASS" if not fails else "FAIL"
-        print(f"{target:<38} {symbol}  {len(fails)} finding(s)")
+        print(f"{container:<38} {symbol}  {len(fails)} finding(s)")
     print("-" * 60)
     print(f"Total findings: {total_findings}")
 
