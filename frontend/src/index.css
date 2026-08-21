@@ -1,0 +1,16 @@
+/* Minimal reset -- the real styling lives in App.css. The Vite template's
+   default index.css (centered #root, large marketing-page type scale) was
+   replaced here since it fought with App.css's layout. */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color-scheme: light dark;
+}
+
+#root {
+  min-height: 100svh;
+}

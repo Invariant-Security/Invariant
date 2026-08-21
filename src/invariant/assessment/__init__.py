@@ -2172,5 +2172,15 @@ def assess_target(target: str) -> list[Finding]:
     return findings
 
 
+def assess_targets(targets: list[str]) -> dict[str, list[Finding]]:
+    """Runs assess_target() over an arbitrary list of container names --
+    the same shape as assess_all(), just not hardcoded to TARGETS. Backs
+    `invariant assess --target ...` (see invariant.cli.assess), which lets
+    quickdemo.sh (and anyone else) assess a different fixed set of
+    containers without duplicating assess_all()'s own logic.
+    """
+    return {target: assess_target(target) for target in targets}
+
+
 def assess_all() -> dict[str, list[Finding]]:
-    return {target: assess_target(target) for target in TARGETS}
+    return assess_targets(TARGETS)

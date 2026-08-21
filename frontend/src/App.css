@@ -1,0 +1,249 @@
+:root {
+  --bg: #0f1420;
+  --panel: #161d2e;
+  --ink: #eef2f8;
+  --sub: #9aa7bd;
+  --border: rgba(255, 255, 255, 0.14);
+  --green: #3ecf8e;
+  --red: #ff6b6b;
+  --amber: #ffcc66;
+  --blue: #6ea8fe;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f6fb;
+    --panel: #ffffff;
+    --ink: #14181f;
+    --sub: #5b6478;
+    --border: rgba(0, 0, 0, 0.1);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+}
+
+header h1 {
+  font-size: 1.5rem;
+  margin: 0 0 0.25rem;
+  letter-spacing: 0.01em;
+}
+
+.subtitle {
+  color: var(--sub);
+  font-size: 0.9rem;
+  margin: 0 0 2rem;
+}
+
+h2 {
+  font-size: 1.05rem;
+  margin: 2rem 0 1rem;
+  letter-spacing: 0.01em;
+}
+
+.hint {
+  color: var(--sub);
+}
+
+.error {
+  color: var(--red);
+  border: 1px solid var(--red);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+}
+
+code {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}
+
+/* --- Step checklist (live progress) --- */
+
+.step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.step:last-child {
+  border-bottom: none;
+}
+
+.step__icon {
+  width: 1.2rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.step--done .step__icon {
+  color: var(--green);
+}
+
+.step--in-progress .step__icon {
+  color: var(--blue);
+}
+
+.step--pending .step__icon {
+  color: var(--sub);
+}
+
+.step--pending {
+  color: var(--sub);
+}
+
+.step__name {
+  flex: 1;
+}
+
+.step__duration {
+  color: var(--sub);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Report cards --- */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--sub);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.card--pass {
+  border-left-color: var(--green);
+}
+
+.card--fail {
+  border-left-color: var(--red);
+}
+
+.card__title {
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+  word-break: break-word;
+}
+
+.card__counts {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.badge {
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.badge--pass {
+  background: rgba(62, 207, 142, 0.15);
+  color: var(--green);
+}
+
+.badge--fail {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--red);
+}
+
+.card__breakdown {
+  font-size: 0.85rem;
+  color: var(--sub);
+}
+
+.card__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.15rem 0;
+}
+
+.card__row--warning {
+  color: var(--amber);
+}
+
+/* --- Run history table --- */
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.history-table th,
+.history-table td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-table .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.85rem;
+  color: var(--sub);
+}
+
+.duration-bar-wrap {
+  position: relative;
+  background: var(--border);
+  border-radius: 4px;
+  height: 1.4rem;
+  min-width: 140px;
+  display: flex;
+  align-items: center;
+}
+
+.duration-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--blue);
+  opacity: 0.35;
+  border-radius: 4px;
+}
+
+.duration-bar-wrap span {
+  position: relative;
+  padding-left: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}

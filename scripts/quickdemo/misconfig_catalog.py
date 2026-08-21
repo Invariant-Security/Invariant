@@ -1,0 +1,540 @@
+"""Catalog of demo misconfiguration recipes for quickdemo.sh.
+
+Each Recipe below breaks exactly one control that PASSES on the hardened
+quickdemo images (infra/docker/quickdemo-{debian,ubuntu}-hardened/Dockerfile)
+back to a FAIL state, via a plain `docker exec <container> sh -c "<command>"`
+-- no new packages, no network, matching the same "pure config" posture the
+hardened Dockerfiles themselves use. scripts/quickdemo/apply_misconfigs.py
+draws 2-3 non-repeating recipes per "problem" container from this pool.
+
+Every recipe cites the real Check.titles list it targets, copied verbatim
+from src/invariant/assessment/__init__.py's CHECKS -- never an invented
+failure condition. See docs/architecture/checks.md for the non-negotiable
+rule this enforces ("every Check must cite a real control... never
+invented") and for how "demo-eligible" (this catalog's scope) was derived:
+it's every one of the 80 CHECKS that already PASSES on both hardened images
+except the fixed structural gap documented in STRUCTURAL_GAP_TITLES below
+(no sudo/cron.{hourly,weekly,monthly}/auditd/journald-config/libpam-
+pwquality on either image, the same class of gap already documented for the
+6 dev/test containers in tests/assessment/test_assess_target.py's
+_SYSTEMIC_GAPS).
+
+`document` on each Recipe is informational only (which of the two demo CIS
+documents -- debian_linux_11 or ubuntu_linux_20_04 -- this recipe's control
+lives in for that distro); assess_target() itself resolves the control by
+title against whichever document matches the target's detected OS, so it's
+never read by apply_misconfigs.py, only by a human via `invariant assess`'s
+own printed Finding chain or checks.md.
+"""
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Recipe:
+    id: str
+    distro: str  # "any", "debian", or "ubuntu" -- every recipe here is
+    # "any" because the two hardened images (see module docstring) share an
+    # identical file layout for everything this catalog touches; the field
+    # still exists so a future distro-specific recipe (e.g. one keyed off a
+    # config path that only exists on one of the two images) has somewhere
+    # to say so, and so apply_misconfigs.py has one real filter to apply
+    # rather than assuming every recipe is universally safe.
+    check_titles: tuple[str, ...]
+    document: str
+    description: str
+    commands: tuple[str, ...]
+
+
+# The 15 CHECKS titles that fail the same way on both hardened images
+# regardless of configuration -- no sudo/cron.{hourly,weekly,monthly}/
+# auditd/libpam-pwquality installed, and journald.conf/bootloader config
+# never present in a container. Confirmed empirically against live
+# quickdemo-debian-hardened/quickdemo-ubuntu-hardened containers (see
+# docs/architecture/checks.md for the full list with reasons). quickdemo.sh
+# uses this constant to separate "environmental" FAILs (here, same on every
+# demo container including the hardened baseline) from "today's story"
+# FAILs (a RECIPES entry that was actually applied to that container).
+STRUCTURAL_GAP_TITLES = frozenset(
+    {
+        "Ensure pam_pwquality module is enabled",
+        "Ensure audit configuration files owner is configured",
+        "Ensure audit configuration files group owner is configured",
+        "Ensure audit tools owner is configured",
+        "Ensure audit tools group owner is configured",
+        "Ensure the audit configuration is immutable",
+        "Ensure sudo log file exists",
+        # /etc/crontab, cron.hourly/weekly/monthly: both title wordings
+        # (see the Group A comment in assessment/__init__.py -- debian_linux_11
+        # uses "Ensure permissions on X are configured", ubuntu_linux_20_04
+        # uses "Ensure access to X is configured", same underlying control).
+        # Confirmed the hard way: a first version of this set only listed the
+        # "access to" wording, which silently left debian_linux_11's own 4
+        # cron findings unclassified ("UNEXPLAINED") in quickdemo.sh's step 9.
+        "Ensure access to /etc/crontab is configured",
+        "Ensure permissions on /etc/crontab are configured",
+        "Ensure access to /etc/cron.hourly is configured",
+        "Ensure permissions on /etc/cron.hourly are configured",
+        "Ensure access to /etc/cron.weekly is configured",
+        "Ensure permissions on /etc/cron.weekly are configured",
+        "Ensure access to /etc/cron.monthly is configured",
+        "Ensure permissions on /etc/cron.monthly are configured",
+        "Ensure journald Compress is configured",
+        "Ensure journald Storage is configured",
+        "Ensure journald log file rotation is configured",
+        "Ensure access to bootloader config is configured",
+    }
+)
+
+_DEBIAN_DOC = "debian_linux_11"
+_UBUNTU_DOC = "ubuntu_linux_20_04"
+_BOTH_DOCS = f"{_DEBIAN_DOC} / {_UBUNTU_DOC}"
+
+RECIPES: list[Recipe] = [
+    # --- File permission/ownership (Group A/D of CHECKS) ---
+    Recipe(
+        id="shadow-world-readable",
+        distro="any",
+        check_titles=(
+            "Ensure permissions on /etc/shadow are configured",
+            "Ensure access to /etc/shadow is configured",
+        ),
+        document=_BOTH_DOCS,
+        description="/etc/shadow loosened to 644 (world-readable password hashes)",
+        commands=("chmod 644 /etc/shadow",),
+    ),
+    Recipe(
+        id="passwd-world-writable",
+        distro="any",
+        check_titles=(
+            "Ensure access to /etc/passwd is configured",
+            "Ensure permissions on /etc/passwd are configured",
+        ),
+        document=_BOTH_DOCS,
+        description="/etc/passwd loosened to 666 (world-writable account database)",
+        commands=("chmod 666 /etc/passwd",),
+    ),
+    Recipe(
+        id="group-world-writable",
+        distro="any",
+        check_titles=(
+            "Ensure access to /etc/group is configured",
+            "Ensure permissions on /etc/group are configured",
+        ),
+        document=_BOTH_DOCS,
+        description="/etc/group loosened to 666 (world-writable group database)",
+        commands=("chmod 666 /etc/group",),
+    ),
+    Recipe(
+        id="gshadow-world-readable",
+        distro="any",
+        check_titles=(
+            "Ensure access to /etc/gshadow is configured",
+            "Ensure permissions on /etc/gshadow are configured",
+        ),
+        document=_BOTH_DOCS,
+        description="/etc/gshadow loosened to 644 (world-readable group password hashes)",
+        commands=("chmod 644 /etc/gshadow",),
+    ),
+    Recipe(
+        id="sshd-config-world-readable",
+        distro="any",
+        check_titles=(
+            "Ensure access to /etc/ssh/sshd_config is configured",
+            "Ensure permissions on /etc/ssh/sshd_config are configured",
+        ),
+        document=_BOTH_DOCS,
+        description="/etc/ssh/sshd_config loosened to 644 (world-readable daemon config)",
+        commands=("chmod 644 /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-private-host-key-world-readable",
+        distro="any",
+        check_titles=(
+            "Ensure permissions on SSH private host key files are configured",
+            "Ensure access to SSH private host key files is configured",
+        ),
+        document=_BOTH_DOCS,
+        description="SSH private host key (RSA) loosened to 644 (world-readable host private key)",
+        commands=("chmod 644 /etc/ssh/ssh_host_rsa_key",),
+    ),
+    Recipe(
+        id="ssh-public-host-key-wrong-owner",
+        distro="any",
+        check_titles=(
+            "Ensure permissions on SSH public host key files are configured",
+            "Ensure access to SSH public host key files is configured",
+        ),
+        document=_BOTH_DOCS,
+        description="SSH public host key (RSA) mode loosened past 644",
+        commands=("chmod 666 /etc/ssh/ssh_host_rsa_key.pub",),
+    ),
+    Recipe(
+        id="shells-world-writable",
+        distro="any",
+        check_titles=(
+            "Ensure access to /etc/shells is configured",
+            "Ensure permissions on /etc/shells are configured",
+        ),
+        document=_BOTH_DOCS,
+        description="/etc/shells loosened to 666 (world-writable allowed-shells list)",
+        commands=("chmod 666 /etc/shells",),
+    ),
+    Recipe(
+        id="cron-d-world-writable",
+        distro="any",
+        check_titles=(
+            "Ensure access to /etc/cron.d is configured",
+            "Ensure permissions on /etc/cron.d are configured",
+        ),
+        document=_BOTH_DOCS,
+        description="/etc/cron.d loosened to 777 (world-writable cron drop-in directory)",
+        commands=("chmod 777 /etc/cron.d",),
+    ),
+    Recipe(
+        id="cron-daily-group-writable",
+        distro="any",
+        check_titles=(
+            "Ensure access to /etc/cron.daily is configured",
+            "Ensure permissions on /etc/cron.daily are configured",
+        ),
+        document=_BOTH_DOCS,
+        description="/etc/cron.daily loosened to 775 (group-writable cron.daily directory)",
+        commands=("chmod 775 /etc/cron.daily",),
+    ),
+    Recipe(
+        id="issue-net-world-writable",
+        distro="any",
+        check_titles=(
+            "Ensure access to /etc/issue.net is configured",
+            "Ensure permissions on /etc/issue.net are configured",
+        ),
+        document=_BOTH_DOCS,
+        description="/etc/issue.net loosened to 666 (world-writable pre-login SSH banner)",
+        commands=("chmod 666 /etc/issue.net",),
+    ),
+    Recipe(
+        id="motd-world-writable",
+        distro="any",
+        check_titles=("Ensure access to /etc/motd is configured",),
+        document=_BOTH_DOCS,
+        description="/etc/motd loosened to 666 (world-writable message-of-the-day)",
+        commands=("chmod 666 /etc/motd",),
+    ),
+    # --- sshd_config directives (Group D/F of CHECKS). Every misconfig
+    # here uses `sed -i` to replace the directive's existing line in place
+    # -- confirmed empirically that `sshd -T` resolves the *first*
+    # occurrence of a repeated directive, so appending a second line (the
+    # naive approach) silently has no effect.
+    Recipe(
+        id="ssh-permit-root-login",
+        distro="any",
+        check_titles=("Ensure sshd PermitRootLogin is disabled",),
+        document=_BOTH_DOCS,
+        description="sshd PermitRootLogin flipped to yes",
+        commands=("sed -i 's/^PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-permit-user-environment",
+        distro="any",
+        check_titles=("Ensure sshd PermitUserEnvironment is disabled",),
+        document=_BOTH_DOCS,
+        description="sshd PermitUserEnvironment flipped to yes",
+        commands=("sed -i 's/^PermitUserEnvironment no/PermitUserEnvironment yes/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-ignore-rhosts",
+        distro="any",
+        check_titles=("Ensure sshd IgnoreRhosts is enabled",),
+        document=_BOTH_DOCS,
+        description="sshd IgnoreRhosts flipped to no",
+        commands=("sed -i 's/^IgnoreRhosts yes/IgnoreRhosts no/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-login-grace-time",
+        distro="any",
+        check_titles=("Ensure sshd LoginGraceTime is configured",),
+        document=_BOTH_DOCS,
+        description="sshd LoginGraceTime set to 0 (disables the grace-time limit entirely)",
+        commands=("sed -i 's/^LoginGraceTime 30/LoginGraceTime 0/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-max-sessions",
+        distro="any",
+        check_titles=(
+            "Ensure sshd MaxSessions is configured",
+            "Ensure SSH MaxSessions is set to 10 or less",
+            "Ensure SSH MaxSessions is limited",
+        ),
+        document=_BOTH_DOCS,
+        description="sshd MaxSessions raised to 50",
+        commands=("sed -i 's/^MaxSessions 10/MaxSessions 50/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-log-level",
+        distro="any",
+        check_titles=(
+            "Ensure sshd LogLevel is configured",
+            "Ensure SSH LogLevel is appropriate",
+        ),
+        document=_BOTH_DOCS,
+        description="sshd LogLevel dropped to QUIET (neither INFO nor VERBOSE)",
+        commands=("sed -i 's/^LogLevel VERBOSE/LogLevel QUIET/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-use-pam",
+        distro="any",
+        check_titles=(
+            "Ensure sshd UsePAM is enabled",
+            "Ensure SSH PAM is enabled",
+        ),
+        document=_BOTH_DOCS,
+        description="sshd UsePAM flipped to no",
+        commands=("sed -i 's/^UsePAM yes/UsePAM no/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-disable-forwarding",
+        distro="any",
+        check_titles=("Ensure sshd DisableForwarding is enabled",),
+        document=_BOTH_DOCS,
+        description="sshd DisableForwarding flipped to no (TCP/agent/X11 forwarding re-enabled)",
+        commands=("sed -i 's/^DisableForwarding yes/DisableForwarding no/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-weak-ciphers",
+        distro="any",
+        check_titles=(
+            "Ensure sshd Ciphers are configured",
+            "Ensure only strong ciphers are used",
+            "Ensure only strong Ciphers are used",
+        ),
+        document=_BOTH_DOCS,
+        description="sshd Ciphers replaced with a CBC-mode (weak) cipher list",
+        commands=("sed -i 's/^Ciphers.*/Ciphers aes256-cbc,aes128-cbc/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-weak-macs",
+        distro="any",
+        check_titles=("Ensure sshd MACs are configured",),
+        document=_BOTH_DOCS,
+        description="sshd MACs replaced with hmac-md5/hmac-sha1-96 (weak)",
+        commands=("sed -i 's/^MACs.*/MACs hmac-md5,hmac-sha1-96/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-weak-kex",
+        distro="any",
+        check_titles=(
+            "Ensure sshd KexAlgorithms is configured",
+            "Ensure only strong Key Exchange algorithms are used",
+        ),
+        document=_BOTH_DOCS,
+        description="sshd KexAlgorithms replaced with diffie-hellman-group14-sha1 (weak)",
+        commands=("sed -i 's/^KexAlgorithms.*/KexAlgorithms diffie-hellman-group14-sha1/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-max-startups",
+        distro="any",
+        check_titles=("Ensure sshd MaxStartups is configured",),
+        document=_BOTH_DOCS,
+        description="sshd MaxStartups loosened to 20:30:100 (full-queue limit above 60)",
+        commands=("sed -i 's/^MaxStartups 10:30:60/MaxStartups 20:30:100/' /etc/ssh/sshd_config",),
+    ),
+    # --- PAM / login.defs / account content (Groups C/F/G plus Group B's
+    # account-content checks) ---
+    Recipe(
+        id="pam-unix-nullok",
+        distro="any",
+        check_titles=(
+            "Ensure pam_unix does not include nullok",
+            "Ensure pam modules do not include nullok",
+        ),
+        document=_BOTH_DOCS,
+        description="nullok re-added to pam_unix.so on common-auth (empty passwords accepted)",
+        commands=("sed -i 's/pam_unix\\.so$/pam_unix.so nullok/' /etc/pam.d/common-auth",),
+    ),
+    Recipe(
+        id="pam-unix-use-authtok-removed",
+        distro="any",
+        check_titles=("Ensure pam_unix includes use_authtok",),
+        document=_BOTH_DOCS,
+        description="use_authtok removed from pam_unix.so on common-password",
+        commands=("sed -i 's/ use_authtok//' /etc/pam.d/common-password",),
+    ),
+    Recipe(
+        id="pam-unix-weak-hashing",
+        distro="any",
+        check_titles=("Ensure pam_unix includes a strong password hashing algorithm",),
+        document=_BOTH_DOCS,
+        description="pam_unix.so hashing algorithm downgraded to md5",
+        commands=("sed -i 's/obscure \\(yescrypt\\|sha512\\)/obscure md5/' /etc/pam.d/common-password",),
+    ),
+    Recipe(
+        id="pam-unix-remember-added",
+        distro="any",
+        check_titles=("Ensure pam_unix does not include remember",),
+        document=_BOTH_DOCS,
+        description="remember=5 added to pam_unix.so on common-password (belongs on pam_pwhistory, not pam_unix)",
+        commands=(
+            "sed -i 's/\\(pam_unix\\.so obscure [a-z0-9]*\\)/\\1 remember=5/' /etc/pam.d/common-password",
+        ),
+    ),
+    Recipe(
+        id="pam-faillock-disabled",
+        distro="any",
+        check_titles=("Ensure pam_faillock module is enabled",),
+        document=_BOTH_DOCS,
+        description="pam_faillock.so removed from common-auth",
+        commands=("sed -i '/pam_faillock\\.so/d' /etc/pam.d/common-auth",),
+    ),
+    Recipe(
+        id="pam-pwhistory-disabled",
+        distro="any",
+        check_titles=("Ensure pam_pwhistory module is enabled",),
+        document=_BOTH_DOCS,
+        description="pam_pwhistory.so removed from common-password",
+        commands=("sed -i '/pam_pwhistory\\.so/d' /etc/pam.d/common-password",),
+    ),
+    Recipe(
+        id="pam-pwhistory-use-authtok-removed",
+        distro="any",
+        check_titles=("Ensure pam_pwhistory includes use_authtok",),
+        document=_BOTH_DOCS,
+        description="use_authtok line removed from pwhistory.conf",
+        commands=("sed -i '/^use_authtok$/d' /etc/security/pwhistory.conf",),
+    ),
+    Recipe(
+        id="pwquality-enforce-for-root-removed",
+        distro="any",
+        check_titles=("Ensure password quality is enforced for the root user",),
+        document=_BOTH_DOCS,
+        description="enforce_for_root removed from pwquality.conf",
+        commands=("sed -i '/enforce_for_root/d' /etc/security/pwquality.conf",),
+    ),
+    Recipe(
+        id="pwquality-minlen-too-short",
+        distro="any",
+        check_titles=(
+            "Ensure minimum password length is configured",
+            "Ensure password length is configured",
+        ),
+        document=_BOTH_DOCS,
+        description="pwquality.conf minlen dropped to 6 (below the 14 floor)",
+        commands=("sed -i 's/minlen = 14/minlen = 6/' /etc/security/pwquality.conf",),
+    ),
+    Recipe(
+        id="pwquality-complexity-relaxed",
+        distro="any",
+        check_titles=("Ensure password complexity is configured",),
+        document=_BOTH_DOCS,
+        description="pwquality.conf minclass dropped to 1 (below the 3-class floor)",
+        commands=("sed -i 's/minclass = 3/minclass = 1/' /etc/security/pwquality.conf",),
+    ),
+    Recipe(
+        id="pwquality-max-repeat-disabled",
+        distro="any",
+        check_titles=("Ensure password same consecutive characters is configured",),
+        document=_BOTH_DOCS,
+        description="pwquality.conf maxrepeat set to 0 (disables the check entirely)",
+        commands=("sed -i 's/maxrepeat = 3/maxrepeat = 0/' /etc/security/pwquality.conf",),
+    ),
+    Recipe(
+        id="pwquality-max-sequence-disabled",
+        distro="any",
+        check_titles=("Ensure password maximum sequential characters is configured",),
+        document=_BOTH_DOCS,
+        description="pwquality.conf maxsequence set to 0 (disables the check entirely)",
+        commands=("sed -i 's/maxsequence = 3/maxsequence = 0/' /etc/security/pwquality.conf",),
+    ),
+    Recipe(
+        id="pwquality-difok-disabled",
+        distro="any",
+        check_titles=("Ensure password number of changed characters is configured",),
+        document=_BOTH_DOCS,
+        description="pwquality.conf difok dropped to 0 (below the floor of 2)",
+        commands=("sed -i 's/difok = 2/difok = 0/' /etc/security/pwquality.conf",),
+    ),
+    Recipe(
+        id="pwhistory-remember-too-short",
+        distro="any",
+        check_titles=("Ensure password history remember is configured",),
+        document=_BOTH_DOCS,
+        description="pwhistory.conf remember dropped to 5 (below the 24 floor)",
+        commands=("sed -i 's/remember = 24/remember = 5/' /etc/security/pwhistory.conf",),
+    ),
+    Recipe(
+        id="pwhistory-enforce-for-root-removed",
+        distro="any",
+        check_titles=("Ensure password history is enforced for the root user",),
+        document=_BOTH_DOCS,
+        description="enforce_for_root removed from pwhistory.conf",
+        commands=("sed -i '/enforce_for_root/d' /etc/security/pwhistory.conf",),
+    ),
+    Recipe(
+        id="default-umask-loosened",
+        distro="any",
+        check_titles=("Ensure default user umask is configured",),
+        document=_BOTH_DOCS,
+        description="login.defs UMASK reverted to 022 (not 027-or-stricter)",
+        commands=("sed -i 's/^UMASK.*/UMASK\\t022/' /etc/login.defs",),
+    ),
+    Recipe(
+        id="weak-password-hashing-algorithm",
+        distro="any",
+        check_titles=("Ensure strong password hashing algorithm is configured",),
+        document=_BOTH_DOCS,
+        description="login.defs ENCRYPT_METHOD downgraded to MD5",
+        commands=("sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD MD5/' /etc/login.defs",),
+    ),
+    Recipe(
+        id="extra-uid0-account",
+        distro="any",
+        check_titles=(
+            "Ensure root is the only UID 0 account",
+            "Verify No UID 0 Accounts Exist Other Than root",
+        ),
+        document=_BOTH_DOCS,
+        description="a second UID-0 account (evildaemon) added to /etc/passwd",
+        commands=("sh -c \"echo 'evildaemon:x:0:1000::/nonexistent:/usr/sbin/nologin' >> /etc/passwd\"",),
+    ),
+    Recipe(
+        id="extra-gid0-account",
+        distro="any",
+        check_titles=("Ensure root is the only GID 0 account",),
+        document=_BOTH_DOCS,
+        description="a second GID-0 primary group account (evilgroupuser) added to /etc/passwd",
+        commands=("sh -c \"echo 'evilgroupuser:x:1001:0::/nonexistent:/usr/sbin/nologin' >> /etc/passwd\"",),
+    ),
+    Recipe(
+        id="extra-gid0-group",
+        distro="any",
+        check_titles=("Ensure group root is the only GID 0 group",),
+        document=_BOTH_DOCS,
+        description="a second group (evilgroup) added to /etc/group with GID 0",
+        commands=("sh -c \"echo 'evilgroup:x:0:' >> /etc/group\"",),
+    ),
+    Recipe(
+        id="empty-shadow-password-field",
+        distro="any",
+        check_titles=(
+            "Ensure /etc/shadow password fields are not empty",
+            "Ensure password fields are not empty",
+            "Ensure Password Fields are Not Empty",
+        ),
+        document=_BOTH_DOCS,
+        description="an account (baduser) added to /etc/shadow with an empty password field",
+        commands=("sh -c \"echo 'baduser::19000:0:99999:7:::' >> /etc/shadow\"",),
+    ),
+    Recipe(
+        id="unshadowed-passwd-account",
+        distro="any",
+        check_titles=("Ensure accounts in /etc/passwd use shadowed passwords",),
+        document=_BOTH_DOCS,
+        description="an account (legacyuser) added to /etc/passwd with a password hash in field 2 instead of 'x'",
+        commands=(
+            "sh -c \"echo 'legacyuser:"
+            "\\$1\\$deadbeef\\$notarealhash:1002:1002::/home/legacyuser:/bin/false' >> /etc/passwd\"",
+        ),
+    ),
+]
+
+assert len({r.id for r in RECIPES}) == len(RECIPES), "Recipe ids must be unique"
