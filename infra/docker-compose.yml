@@ -5,6 +5,11 @@
 # wiring is needed between this and the app.
 #
 # Run from repo root: docker compose -f infra/docker-compose.yml up
+#
+# Port 5432 bound to 127.0.0.1:5435, not the default 5432/0.0.0.0: this
+# machine already has an unrelated Postgres container (a different project)
+# holding host port 5432, and a Docker-published port bypasses the firewall
+# regardless, so binding to loopback only is the safer default anyway.
 
 services:
   postgres:
@@ -14,7 +19,7 @@ services:
       POSTGRES_PASSWORD: invariant_dev
       POSTGRES_DB: invariant
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5435:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

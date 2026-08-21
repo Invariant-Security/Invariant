@@ -2126,6 +2126,11 @@ class Finding:
     document_version: str
     evidence_output: str
     collected_at: str
+    # Real CIS remediation text (invariant.normalizer.Control.remediation),
+    # already extracted from the PDF and stored on the control -- not
+    # invented here. Defaults to "" for the handful of test fixtures that
+    # construct a Finding without it.
+    remediation: str = ""
 
 
 def document_slug_for_os(os_id: str, version_id: str) -> str:
@@ -2166,6 +2171,7 @@ def assess_target(target: str) -> list[Finding]:
                 document_version=control["publisher_version"],
                 evidence_output=check.evidence(facts),
                 collected_at=collected_at,
+                remediation=control["normalized_data"].get("remediation", ""),
             )
         )
     conn.close()

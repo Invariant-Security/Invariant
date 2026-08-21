@@ -48,6 +48,14 @@ app.add_middleware(
 )
 
 
+@app.get("/healthz")
+def healthz():
+    """Liveness check for the deploy's Docker healthcheck -- doesn't touch
+    quickdemo data, just confirms the process is up.
+    """
+    return {"status": "ok"}
+
+
 def _read_runs() -> list[dict]:
     """Parses runs.jsonl into a list of run records, oldest first (the
     order they were appended in) -- callers reverse when "most recent

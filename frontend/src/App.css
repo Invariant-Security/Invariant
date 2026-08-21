@@ -247,3 +247,124 @@ code {
   padding-left: 0.5rem;
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Info tooltip icon --- */
+
+.info-icon {
+  cursor: help;
+  color: var(--blue);
+  font-style: normal;
+}
+
+/* --- Expandable run history rows --- */
+
+.history-row--clickable {
+  cursor: pointer;
+}
+
+.history-row--clickable:hover {
+  background: var(--panel);
+}
+
+.disclosure {
+  display: inline-block;
+  width: 1rem;
+  color: var(--sub);
+}
+
+.history-row__detail {
+  background: var(--panel);
+  padding: 0 !important;
+}
+
+.run-detail {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.container-detail {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+}
+
+.container-detail__title {
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.container-detail__role {
+  margin: 0.2rem 0 0.6rem;
+  font-size: 0.8rem;
+}
+
+.finding-group {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--sub);
+  margin: 0.9rem 0 0.4rem;
+}
+
+.finding-group--warning {
+  color: var(--amber);
+}
+
+.finding-details summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--sub);
+  margin: 0.9rem 0 0.4rem;
+}
+
+.finding-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.finding {
+  border-left: 3px solid var(--red);
+  padding: 0.3rem 0 0.3rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.finding__head {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.finding__meta {
+  color: var(--sub);
+  font-size: 0.78rem;
+}
+
+.finding__evidence {
+  color: var(--sub);
+  font-size: 0.78rem;
+  word-break: break-word;
+}
+
+.finding-remediation {
+  margin-top: 0.3rem;
+}
+
+.finding-remediation summary {
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 0.78rem;
+}
+
+.finding-remediation p {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+}

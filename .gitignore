@@ -27,10 +27,17 @@ htmlcov/
 .env
 
 # Raw artifacts downloaded from sources (see INVARIANT_PRD.md, section 19).
-# Metadata sidecars (*.json) are regenerated on every fetch (they embed a
-# retrieved_at timestamp), so only the PDFs themselves are tracked, and only
-# under their CIS OS-family subdirectory (data/raw/cis/debian/,
+# Metadata sidecars (*.json) are normally regenerated on every fetch (they
+# embed a retrieved_at timestamp), so only the PDFs themselves are tracked,
+# and only under their CIS OS-family subdirectory (data/raw/cis/debian/,
 # data/raw/cis/ubuntu/) -- everything else under data/raw/ stays ignored.
+#
+# Exception: the 2 sidecars quickdemo.sh's extract/import step actually
+# needs (debian_linux_11, ubuntu_linux_20_04) ARE tracked, with a
+# repo-root-relative `path` (not absolute) -- extract.py has no fallback to
+# derive this metadata from a bare PDF, so without it `invariant extract`
+# fails on a fresh clone with no way to regenerate it short of a live CIS
+# Workbench fetch. Deliberate exception to the rule above (2026-08-21).
 data/raw/*
 !data/raw/.gitkeep
 !data/raw/cis/
@@ -41,6 +48,8 @@ data/raw/cis/debian/*
 data/raw/cis/ubuntu/*
 !data/raw/cis/debian/*.pdf
 !data/raw/cis/ubuntu/*.pdf
+!data/raw/cis/debian/cis_debian_linux_11_2.0.0_be3c72ca29c9.json
+!data/raw/cis/ubuntu/cis_ubuntu_20_04_3.0.0_55b7089358e1.json
 
 # Editor/IDE
 # .idea/

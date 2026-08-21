@@ -3,7 +3,8 @@ SELECT
     c.title,
     s.name AS source_name,
     d.name AS document_name,
-    dv.publisher_version
+    dv.publisher_version,
+    c.normalized_data
 FROM controls c
 JOIN document_versions dv ON dv.id = c.document_version_id
 JOIN documents d ON d.id = dv.document_id

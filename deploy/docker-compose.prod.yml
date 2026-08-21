@@ -1,0 +1,47 @@
+# Prod stack for invariant.victordg.dev.br. No database here on purpose --
+# the live API only reads data/quickdemo/ from disk (see claude_deploy.md /
+# CLAUDE.md correction); Postgres is only needed transiently, on the host,
+# while (re-)running ./quickdemo.sh to refresh that data.
+#
+# Run from repo root: docker compose -f deploy/docker-compose.prod.yml up -d --build --wait
+name: invariant
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    container_name: invariant-api
+    environment:
+      INVARIANT_API_CORS_ORIGINS: https://invariant.victordg.dev.br
+    volumes:
+      - ../data/quickdemo:/app/data/quickdemo:ro
+    networks:
+      - vps-proxy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: ../frontend
+      args:
+        VITE_API_BASE: ""
+    container_name: invariant-web
+    networks:
+      - vps-proxy
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  vps-proxy:
+    external: true

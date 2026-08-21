@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import './App.css'
 
 // Default `uvicorn invariant.api.main:app --reload` address -- see the
@@ -24,6 +24,24 @@ const QUICKDEMO_STEPS = [
   'Assessing the 5 demo containers (invariant assess)',
   'Final summary: misconfig manifest vs assess results',
 ]
+
+// Real roles, not guesses -- see infra/docker-compose.quickdemo.yml and
+// quickdemo.sh's HARDENED_CONTAINER/PROBLEM_CONTAINERS.
+const ENDPOINT_INFO = {
+  'invariant-demo-ubuntu-hardened':
+    'Hardened Ubuntu baseline -- reference image, never gets a misconfig applied.',
+  'invariant-demo-debian-1': 'Hardened Debian image, 2-3 misconfigs applied this run.',
+  'invariant-demo-debian-2': 'Hardened Debian image, 2-3 misconfigs applied this run.',
+  'invariant-demo-ubuntu-1': 'Hardened Ubuntu image, 2-3 misconfigs applied this run.',
+  'invariant-demo-ubuntu-2': 'Hardened Ubuntu image, 2-3 misconfigs applied this run.',
+}
+
+const ENVIRONMENTAL_EXPLANATION =
+  "Same 15 checks fail on every demo container, including the hardened baseline. Not a " +
+  "misconfig -- these images are minimal Docker containers, so they never have sudo, " +
+  "cron.{hourly,weekly,monthly}, auditd, or libpam-pwquality installed, and never have a " +
+  "journald.conf or bootloader config file at all. Confirmed empirically against both " +
+  "hardened images (see misconfig_catalog.py's STRUCTURAL_GAP_TITLES)."
 
 function formatSeconds(value) {
   if (value === null || value === undefined) return '–'
@@ -104,7 +122,12 @@ function ContainerCard({ name, data }) {
       </div>
       <div className="card__breakdown">
         <div className="card__row">
-          <span>Environmental (structural gap)</span>
+          <span>
+            Environmental (structural gap){' '}
+            <span className="info-icon" title={ENVIRONMENTAL_EXPLANATION} aria-label={ENVIRONMENTAL_EXPLANATION}>
+              ⓘ
+            </span>
+          </span>
           <strong>{data.environmental.length}</strong>
         </div>
         <div className="card__row">
@@ -136,7 +159,85 @@ function ReportCards({ report }) {
   )
 }
 
+function FindingRow({ finding }) {
+  return (
+    <li className="finding">
+      <div className="finding__head">
+        <span className="mono">{finding.external_id}</span>
+        <span>{finding.control_title}</span>
+      </div>
+      <div className="finding__meta">
+        {finding.source_name}/{finding.document_name} v{finding.document_version}
+      </div>
+      <div className="finding__evidence">{finding.evidence_output}</div>
+      {finding.remediation && (
+        <details className="finding-remediation">
+          <summary>How to fix</summary>
+          <p>{finding.remediation}</p>
+        </details>
+      )}
+    </li>
+  )
+}
+
+function ContainerDetail({ name, data }) {
+  return (
+    <div className="container-detail">
+      <div className="container-detail__title">{name}</div>
+      {ENDPOINT_INFO[name] && <p className="hint container-detail__role">{ENDPOINT_INFO[name]}</p>}
+      <div className="card__counts">
+        <span className="badge badge--pass">{data.pass_count} PASS</span>
+        <span className="badge badge--fail">{data.fail_count} FAIL</span>
+      </div>
+
+      {data.unexplained.length > 0 && (
+        <>
+          <h4 className="finding-group finding-group--warning">Unexplained ({data.unexplained.length})</h4>
+          <ul className="finding-list">
+            {data.unexplained.map((f) => (
+              <FindingRow key={f.external_id} finding={f} />
+            ))}
+          </ul>
+        </>
+      )}
+
+      {data.story.length > 0 && (
+        <>
+          <h4 className="finding-group">Today&apos;s story ({data.story.length})</h4>
+          <ul className="finding-list">
+            {data.story.map((f) => (
+              <FindingRow key={f.external_id} finding={f} />
+            ))}
+          </ul>
+        </>
+      )}
+
+      {data.environmental.length > 0 && (
+        <details className="finding-details">
+          <summary>Environmental ({data.environmental.length})</summary>
+          <ul className="finding-list">
+            {data.environmental.map((f) => (
+              <FindingRow key={f.external_id} finding={f} />
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
+function RunDetail({ report }) {
+  return (
+    <div className="run-detail">
+      {report.targets.map((name) => (
+        <ContainerDetail key={name} name={name} data={report.containers[name]} />
+      ))}
+    </div>
+  )
+}
+
 function RunHistory({ runs }) {
+  const [expandedRunId, setExpandedRunId] = useState(null)
   if (runs.length === 0) {
     return (
       <section>
@@ -163,22 +264,40 @@ function RunHistory({ runs }) {
           </tr>
         </thead>
         <tbody>
-          {runs.map((run) => (
-            <tr key={run.run_id}>
-              <td className="mono">{run.run_id}</td>
-              <td>{formatTimestamp(run.started_at)}</td>
-              <td className="mono">{run.seed ?? '–'}</td>
-              <td>
-                <div className="duration-bar-wrap">
-                  <div
-                    className="duration-bar"
-                    style={{ width: `${(run.total_duration_seconds / maxDuration) * 100}%` }}
-                  />
-                  <span>{formatSeconds(run.total_duration_seconds)}</span>
-                </div>
-              </td>
-            </tr>
-          ))}
+          {runs.map((run) => {
+            const isExpanded = expandedRunId === run.run_id
+            return (
+              <Fragment key={run.run_id}>
+                <tr
+                  className="history-row--clickable"
+                  onClick={() => setExpandedRunId(isExpanded ? null : run.run_id)}
+                  aria-expanded={isExpanded}
+                >
+                  <td className="mono">
+                    <span className="disclosure">{isExpanded ? '▾' : '▸'}</span> {run.run_id}
+                  </td>
+                  <td>{formatTimestamp(run.started_at)}</td>
+                  <td className="mono">{run.seed ?? '–'}</td>
+                  <td>
+                    <div className="duration-bar-wrap">
+                      <div
+                        className="duration-bar"
+                        style={{ width: `${(run.total_duration_seconds / maxDuration) * 100}%` }}
+                      />
+                      <span>{formatSeconds(run.total_duration_seconds)}</span>
+                    </div>
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr>
+                    <td colSpan={4} className="history-row__detail">
+                      <RunDetail report={run.report} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            )
+          })}
         </tbody>
       </table>
     </section>

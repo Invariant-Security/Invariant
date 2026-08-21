@@ -167,11 +167,12 @@ def select_control_by_title(conn: psycopg.Connection, *, document: str, titles: 
         row = cur.fetchone()
         if row is None:
             return None
-        external_id, title, source_name, document_name, publisher_version = row
+        external_id, title, source_name, document_name, publisher_version, normalized_data = row
         return {
             "external_id": external_id,
             "title": title,
             "source_name": source_name,
             "document_name": document_name,
             "publisher_version": publisher_version,
+            "normalized_data": normalized_data,
         }
