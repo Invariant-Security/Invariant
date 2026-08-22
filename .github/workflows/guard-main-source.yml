@@ -1,0 +1,22 @@
+# Guard — só a branch `dev` pode abrir PR para `main`.
+# GitHub não restringe nativamente a branch de origem de um PR; este check faz isso.
+# Marcar o check "guard" como obrigatório no ruleset da main.
+# Idêntico em todos os repos — copiar sem alterações para <repo>/.github/workflows/guard-main-source.yml
+name: guard-main-source
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apenas dev pode abrir PR para main
+        run: |
+          if [ "${{ github.head_ref }}" != "dev" ]; then
+            echo "::error::PRs para main só são permitidos a partir da branch 'dev' (head atual: '${{ github.head_ref }}')."
+            exit 1
+          fi
+          echo "OK: PR vindo de dev."

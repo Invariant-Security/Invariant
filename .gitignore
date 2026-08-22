@@ -32,12 +32,14 @@ htmlcov/
 # and only under their CIS OS-family subdirectory (data/raw/cis/debian/,
 # data/raw/cis/ubuntu/) -- everything else under data/raw/ stays ignored.
 #
-# Exception: the 2 sidecars quickdemo.sh's extract/import step actually
-# needs (debian_linux_11, ubuntu_linux_20_04) ARE tracked, with a
-# repo-root-relative `path` (not absolute) -- extract.py has no fallback to
-# derive this metadata from a bare PDF, so without it `invariant extract`
-# fails on a fresh clone with no way to regenerate it short of a live CIS
-# Workbench fetch. Deliberate exception to the rule above (2026-08-21).
+# Exception: the sidecars quickdemo.sh's extract/import step and CI's test
+# suite actually need (debian_linux_11/12/13, ubuntu_linux_20_04/22_04/24_04
+# -- one per OS version the 6 fixed assessment test containers run, plus the
+# 2 quickdemo documents) ARE tracked, with a repo-root-relative `path` (not
+# absolute) -- extract.py has no fallback to derive this metadata from a
+# bare PDF, so without it `invariant extract` fails on a fresh clone (or in
+# CI) with no way to regenerate it short of a live CIS Workbench fetch.
+# Deliberate exception to the rule above (2026-08-21/22).
 data/raw/*
 !data/raw/.gitkeep
 !data/raw/cis/
@@ -49,7 +51,11 @@ data/raw/cis/ubuntu/*
 !data/raw/cis/debian/*.pdf
 !data/raw/cis/ubuntu/*.pdf
 !data/raw/cis/debian/cis_debian_linux_11_2.0.0_be3c72ca29c9.json
+!data/raw/cis/debian/cis_debian_linux_12_2.0.0_f0096d204a30.json
+!data/raw/cis/debian/cis_debian_linux_13_1.0.0_efa5df0e5b8d.json
 !data/raw/cis/ubuntu/cis_ubuntu_20_04_3.0.0_55b7089358e1.json
+!data/raw/cis/ubuntu/cis_ubuntu_22_04_3.0.0_3ce1c344a2d7.json
+!data/raw/cis/ubuntu/cis_ubuntu_24_04_2.0.0_9486caebef04.json
 
 # Editor/IDE
 # .idea/

@@ -1,0 +1,8 @@
+{
+  "source": "cis",
+  "document": "ubuntu_linux_22_04",
+  "version": "3.0.0",
+  "content_hash": "3ce1c344a2d7da1323c0362a37aac8ff27369cd1f01adc0d8b6ed7a7b332f54d",
+  "retrieved_at": "2026-08-22T04:22:51.333899+00:00",
+  "path": "data/raw/cis/ubuntu/cis_ubuntu_22_04_3.0.0_3ce1c344a2d7.pdf"
+}

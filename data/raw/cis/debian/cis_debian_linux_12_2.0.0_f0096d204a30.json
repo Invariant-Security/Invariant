@@ -1,0 +1,8 @@
+{
+  "source": "cis",
+  "document": "debian_linux_12",
+  "version": "2.0.0",
+  "content_hash": "f0096d204a30f1f74573332f192b33d3f34a3fa9c25d006cf7282a0d93214885",
+  "retrieved_at": "2026-08-22T04:22:51.271675+00:00",
+  "path": "data/raw/cis/debian/cis_debian_linux_12_2.0.0_f0096d204a30.pdf"
+}

@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: invariant
+          POSTGRES_PASSWORD: invariant_dev
+          POSTGRES_DB: invariant
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://invariant:invariant_dev@localhost:5432/invariant
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: playwright install --with-deps chromium
+
+      # tests/assessment/test_assess_target.py asserts real findings against
+      # these 6 fixed containers (2 clean baselines + 2 SSH misconfigs + 2
+      # permissions misconfigs, one Debian/Ubuntu pair each) -- not mocked.
+      - name: Build and start the 6 fixed assessment test containers
+        run: |
+          docker compose -f infra/docker-compose.yml up -d --build \
+            debian-baseline debian-ssh-bad debian-permissions-bad \
+            ubuntu-baseline ubuntu-ssh-bad ubuntu-permissions-bad
+
+      - run: alembic upgrade head
+
+      # Populates the 6 CIS documents assess_target() looks controls up
+      # against (one per OS version the containers above run). The PDFs and
+      # their metadata sidecars are committed (see .gitignore's documented
+      # exception) so this never needs a live CIS Workbench fetch.
+      - name: Import the CIS documents these tests assess against
+        run: |
+          for doc in cis-debian-linux-11 cis-debian-linux-12 cis-debian-linux-13 \
+                     cis-ubuntu-linux-20-04 cis-ubuntu-linux-22-04 cis-ubuntu-linux-24-04; do
+            invariant extract "$doc"
+            invariant import_document "$doc"
+          done
+
+      - run: pytest
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
