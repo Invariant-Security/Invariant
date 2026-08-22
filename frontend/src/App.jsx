@@ -238,6 +238,7 @@ function RunDetail({ report }) {
 
 const CONTACT_EMAIL = 'victord.goncalves@outlook.com'
 const CONTACT_WHATSAPP_HREF = 'https://wa.me/5511970599016'
+const CONTACT_GITHUB_HREF = 'https://github.com/VictorDG00'
 
 function ContactFooter() {
   return (
@@ -248,6 +249,9 @@ function ContactFooter() {
       </a>
       <a className="btn" href={CONTACT_WHATSAPP_HREF} target="_blank" rel="noopener noreferrer">
         ✆ WhatsApp
+      </a>
+      <a className="btn" href={CONTACT_GITHUB_HREF} target="_blank" rel="noopener noreferrer">
+        ⎇ GitHub
       </a>
     </footer>
   )
