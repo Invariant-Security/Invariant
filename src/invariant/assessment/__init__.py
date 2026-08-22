@@ -2131,6 +2131,15 @@ class Finding:
     # invented here. Defaults to "" for the handful of test fixtures that
     # construct a Finding without it.
     remediation: str = ""
+    # The raw artifact (PDF) this control's document_version was extracted
+    # from -- closes the last link of the Finding -> Control -> Source ->
+    # Document Version -> Original evidence chain (collector.save_raw_artifact,
+    # already stored in document_versions, just never selected before).
+    # document_retrieved_at is when THAT artifact was collected, distinct
+    # from collected_at above (when THIS finding was assessed).
+    raw_artifact_path: str = ""
+    content_hash: str = ""
+    document_retrieved_at: str = ""
 
 
 def document_slug_for_os(os_id: str, version_id: str) -> str:
@@ -2172,6 +2181,11 @@ def assess_target(target: str) -> list[Finding]:
                 evidence_output=check.evidence(facts),
                 collected_at=collected_at,
                 remediation=control["normalized_data"].get("remediation", ""),
+                raw_artifact_path=control["raw_artifact_path"] or "",
+                content_hash=control["content_hash"] or "",
+                document_retrieved_at=(
+                    control["retrieved_at"].isoformat() if control["retrieved_at"] else ""
+                ),
             )
         )
     conn.close()
