@@ -240,9 +240,9 @@ const CONTACT_EMAIL = 'victord.goncalves@outlook.com'
 const CONTACT_WHATSAPP_HREF = 'https://wa.me/5511970599016'
 const CONTACT_GITHUB_HREF = 'https://github.com/VictorDG00'
 
-function ContactFooter() {
+function ContactLinks() {
   return (
-    <footer className="contact">
+    <div className="contact">
       <span className="contact__label">Questions? Get in touch:</span>
       <a className="btn" href={`mailto:${CONTACT_EMAIL}`}>
         ✉ Email
@@ -253,7 +253,28 @@ function ContactFooter() {
       <a className="btn" href={CONTACT_GITHUB_HREF} target="_blank" rel="noopener noreferrer">
         ⎇ GitHub
       </a>
-    </footer>
+    </div>
+  )
+}
+
+// Current implementation state, not the aspirational roadmap line in
+// README.md (which names AWS Foundations Benchmark specifically) --
+// the actual pipeline (bxsec branch, merged into main) targets CIS
+// Debian/Ubuntu Linux benchmarks, and this demo runs it against Debian 11
+// and Ubuntu 20.04. Future sources are README.md's V0.4 roadmap item,
+// verbatim.
+function AboutBlurb() {
+  return (
+    <p className="about">
+      Invariant ingests security benchmark documents, extracts each recommendation, and
+      normalizes it into a versioned, traceable Control &mdash; every result here traces back
+      to a real source document and version, never an assumption. Right now that means{' '}
+      <strong>CIS Benchmarks for Debian and Ubuntu Linux</strong> (this demo runs the full
+      pipeline against Debian 11 and Ubuntu 20.04). The roadmap adds{' '}
+      <strong>FIRST/CVSS, the AWS Well-Architected Security Pillar, and OWASP</strong> as
+      further trusted sources, so future assessments can be checked against more than one
+      authority.
+    </p>
   )
 }
 
@@ -388,6 +409,8 @@ export default function App() {
       <header>
         <h1>Invariant &mdash; quickdemo</h1>
         <p className="subtitle">Live progress and run history for the CIS benchmark assessment demo.</p>
+        <AboutBlurb />
+        <ContactLinks />
       </header>
 
       {error && <p className="error">API error: {error}</p>}
@@ -409,8 +432,6 @@ export default function App() {
 
       {!isRunning && statusChecked && status && <ReportCards report={latestReport} />}
       {!isRunning && statusChecked && <RunHistory runs={runs} />}
-
-      <ContactFooter />
     </div>
   )
 }
