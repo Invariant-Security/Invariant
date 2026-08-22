@@ -236,6 +236,23 @@ function RunDetail({ report }) {
   )
 }
 
+const CONTACT_EMAIL = 'victord.goncalves@outlook.com'
+const CONTACT_WHATSAPP_HREF = 'https://wa.me/5511970599016'
+
+function ContactFooter() {
+  return (
+    <footer className="contact">
+      <span className="contact__label">Questions? Get in touch:</span>
+      <a className="btn" href={`mailto:${CONTACT_EMAIL}`}>
+        ✉ Email
+      </a>
+      <a className="btn" href={CONTACT_WHATSAPP_HREF} target="_blank" rel="noopener noreferrer">
+        ✆ WhatsApp
+      </a>
+    </footer>
+  )
+}
+
 function RunHistory({ runs }) {
   const [expandedRunId, setExpandedRunId] = useState(null)
   if (runs.length === 0) {
@@ -388,6 +405,8 @@ export default function App() {
 
       {!isRunning && statusChecked && status && <ReportCards report={latestReport} />}
       {!isRunning && statusChecked && <RunHistory runs={runs} />}
+
+      <ContactFooter />
     </div>
   )
 }
