@@ -4,7 +4,10 @@ SELECT
     s.name AS source_name,
     d.name AS document_name,
     dv.publisher_version,
-    c.normalized_data
+    c.normalized_data,
+    dv.raw_artifact_path,
+    dv.content_hash,
+    dv.retrieved_at
 FROM controls c
 JOIN document_versions dv ON dv.id = c.document_version_id
 JOIN documents d ON d.id = dv.document_id
