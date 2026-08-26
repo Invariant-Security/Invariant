@@ -608,6 +608,107 @@ def _evidence_pwhistory_enforce_for_root(facts: SystemFacts) -> str:
     return f"pwhistory.conf: enforce_for_root {conf_present}; common-password pam_pwhistory.so: enforce_for_root {pam_present}"
 
 
+# Group H: pam_faillock lockout policy, via faillock.conf + pam_faillock.so's
+# own inline arguments on /etc/pam.d/common-auth. Every real audit here has
+# the same two-part shape as pwhistory_remember above: a faillock.conf
+# directive, AND (if pam_faillock.so also sets the same argument inline on
+# common-auth) that inline value must independently not fall in a disallowed
+# range -- confirmed identical grep patterns/thresholds across all 6 target
+# documents (debian_linux_11/12/13, ubuntu_linux_20_04/22_04/24_04).
+_FAILLOCK_UNLOCK_TIME_BAD_RE = re.compile(r"(?<!root_)unlock_time\s*=\s*([1-9]|[1-9][0-9]|[1-8][0-9]{2})\b")
+_FAILLOCK_DENY_BAD_RE = re.compile(r"deny\s*=\s*(0|[6-9]|[1-9][0-9]+)\b")
+_FAILLOCK_ROOT_UNLOCK_TIME_BAD_RE = re.compile(r"root_unlock_time\s*=\s*([1-9]|[1-5][0-9])\b")
+
+
+def _pam_faillock_lines(facts: SystemFacts) -> list[str]:
+    """Lines in common-auth configuring pam_faillock.so -- typically 2-3
+    (preauth/authfail/authsucc), any of which may carry its own inline
+    deny=/unlock_time=/root_unlock_time= argument overriding faillock.conf.
+    """
+    return [line.strip() for line in facts.pam_common_auth.splitlines() if "pam_faillock.so" in line]
+
+
+def _evaluate_password_unlock_time(facts: SystemFacts) -> bool:
+    """Matches the real audit ("Ensure password unlock time is configured"):
+    faillock.conf's unlock_time must be 0 (never) or >= 900 (15 minutes) if
+    set at all -- absent is the compliant default. AND, if pam_faillock.so's
+    own unlock_time= argument is set inline on common-auth, that value must
+    not fall in the disallowed 1-899 range either.
+    """
+    value = parse_pwquality_conf(facts.faillock_text).get("unlock_time")
+    if value is not None:
+        try:
+            n = int(value)
+        except ValueError:
+            return False
+        if not (n == 0 or n >= 900):
+            return False
+    return not any(_FAILLOCK_UNLOCK_TIME_BAD_RE.search(line) for line in _pam_faillock_lines(facts))
+
+
+def _evidence_password_unlock_time(facts: SystemFacts) -> str:
+    value = parse_pwquality_conf(facts.faillock_text).get("unlock_time", "<not set>")
+    pam_lines = "; ".join(_pam_faillock_lines(facts)) or "<no pam_faillock.so line>"
+    return f"faillock.conf: unlock_time {value}; common-auth pam_faillock.so: {pam_lines}"
+
+
+def _evaluate_password_failed_attempts_lockout(facts: SystemFacts) -> bool:
+    """Matches the real audit ("Ensure password failed attempts lockout is
+    configured"): faillock.conf's deny must be in 1-5 if set at all (absent
+    is the compliant default, same precedent as pwquality/pwhistory checks
+    above). AND pam_faillock.so's own inline deny= argument, if set, must
+    not be 0 or >= 6.
+    """
+    value = parse_pwquality_conf(facts.faillock_text).get("deny")
+    if value is not None:
+        try:
+            n = int(value)
+        except ValueError:
+            return False
+        if not (1 <= n <= 5):
+            return False
+    return not any(_FAILLOCK_DENY_BAD_RE.search(line) for line in _pam_faillock_lines(facts))
+
+
+def _evidence_password_failed_attempts_lockout(facts: SystemFacts) -> str:
+    value = parse_pwquality_conf(facts.faillock_text).get("deny", "<not set>")
+    pam_lines = "; ".join(_pam_faillock_lines(facts)) or "<no pam_faillock.so line>"
+    return f"faillock.conf: deny {value}; common-auth pam_faillock.so: {pam_lines}"
+
+
+def _evaluate_password_lockout_includes_root(facts: SystemFacts) -> bool:
+    """Matches the real audit ("Ensure password failed attempts lockout
+    includes root account"): faillock.conf must set even_deny_root and/or
+    root_unlock_time. If root_unlock_time is set, it must be 0 or >= 60
+    (disallowed range 1-59). Same secondary check as the other two: if
+    pam_faillock.so's own root_unlock_time= argument is set inline on
+    common-auth, it must not fall in that disallowed range either.
+    """
+    directives = parse_pwquality_conf(facts.faillock_text)
+    if "even_deny_root" not in directives and "root_unlock_time" not in directives:
+        return False
+    root_unlock_time = directives.get("root_unlock_time")
+    if root_unlock_time is not None:
+        try:
+            n = int(root_unlock_time)
+        except ValueError:
+            return False
+        if not (n == 0 or n >= 60):
+            return False
+    return not any(_FAILLOCK_ROOT_UNLOCK_TIME_BAD_RE.search(line) for line in _pam_faillock_lines(facts))
+
+
+def _evidence_password_lockout_includes_root(facts: SystemFacts) -> str:
+    directives = parse_pwquality_conf(facts.faillock_text)
+    even_deny_root = "present" if "even_deny_root" in directives else "missing"
+    root_unlock_time = directives.get("root_unlock_time", "<not set>")
+    pam_lines = "; ".join(_pam_faillock_lines(facts)) or "<no pam_faillock.so line>"
+    return (
+        f"faillock.conf: even_deny_root {even_deny_root}, root_unlock_time {root_unlock_time}; "
+        f"common-auth pam_faillock.so: {pam_lines}"
+    )
+
+
 def parse_login_defs(text: str) -> dict[str, str]:
     """Parses "KEY value" lines from /etc/login.defs -- same shape as
     parse_sshd_config() in facts.py (comments/blank lines skipped, later
@@ -2700,6 +2801,24 @@ CHECKS = [
         titles=["Ensure password history is enforced for the root user"],
         evaluate=_evaluate_pwhistory_enforce_for_root,
         evidence=_evidence_pwhistory_enforce_for_root,
+    ),
+    # Group H: pam_faillock lockout policy, via faillock.conf +
+    # pam_faillock.so's own inline arguments on common-auth. All 3 confirmed
+    # identical grep patterns/thresholds across all 6 target documents.
+    Check(
+        titles=["Ensure password unlock time is configured"],
+        evaluate=_evaluate_password_unlock_time,
+        evidence=_evidence_password_unlock_time,
+    ),
+    Check(
+        titles=["Ensure password failed attempts lockout is configured"],
+        evaluate=_evaluate_password_failed_attempts_lockout,
+        evidence=_evidence_password_failed_attempts_lockout,
+    ),
+    Check(
+        titles=["Ensure password failed attempts lockout includes root account"],
+        evaluate=_evaluate_password_lockout_includes_root,
+        evidence=_evidence_password_lockout_includes_root,
     ),
     # Group D: remaining sshd_config directives + SSH host key permissions.
     Check(
