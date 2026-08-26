@@ -12,12 +12,13 @@ from src/invariant/assessment/__init__.py's CHECKS -- never an invented
 failure condition. See docs/architecture/checks.md for the non-negotiable
 rule this enforces ("every Check must cite a real control... never
 invented") and for how "demo-eligible" (this catalog's scope) was derived:
-it's every one of the 80 CHECKS that already PASSES on both hardened images
+it's every one of the 122 CHECKS that already PASSES on both hardened images
 except the fixed structural gap documented in STRUCTURAL_GAP_TITLES below
-(no sudo/cron.{hourly,weekly,monthly}/auditd/journald-config/libpam-
-pwquality on either image, the same class of gap already documented for the
-6 dev/test containers in tests/assessment/test_assess_target.py's
-_SYSTEMIC_GAPS).
+(no cron.{hourly,weekly,monthly}/journald-config/libpam-pwquality on either
+image, an immutable audit rule set never actually loaded even though
+round 2 installed the auditd package itself -- see that constant's own
+comment -- the same class of gap already documented for the 6 dev/test
+containers in tests/assessment/test_assess_target.py's _SYSTEMIC_GAPS).
 
 `document` on each Recipe is informational only (which of the two demo CIS
 documents -- debian_linux_11 or ubuntu_linux_20_04 -- this recipe's control
@@ -58,10 +59,15 @@ class Recipe:
 STRUCTURAL_GAP_TITLES = frozenset(
     {
         "Ensure pam_pwquality module is enabled",
-        "Ensure audit configuration files owner is configured",
-        "Ensure audit configuration files group owner is configured",
-        "Ensure audit tools owner is configured",
-        "Ensure audit tools group owner is configured",
+        # Round 2 (Group N) installed the auditd/audispd-plugins packages
+        # into both hardened images (needed for the new "Ensure auditd
+        # packages are installed" check) -- confirmed empirically this also
+        # made /etc/audit/ and /sbin/auditctl etc. exist with correct
+        # root:root ownership by default, so the 4 audit *ownership*
+        # checks that used to be structural gaps now PASS with zero extra
+        # work. "Ensure the audit configuration is immutable" still fails
+        # -- that needs an actual loaded, immutable-flagged rule set, not
+        # just the package installed, so it stays a real structural gap.
         "Ensure the audit configuration is immutable",
         "Ensure sudo log file exists",
         # /etc/crontab, cron.hourly/weekly/monthly: both title wordings
@@ -487,14 +493,37 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         id="extra-uid0-account",
+        # Found running quickdemo.sh for real after round 2 added "Ensure
+        # no duplicate UIDs exist": a second UID-0 account is unavoidably
+        # also a duplicate UID, same story as extra-gid0-group below. Also
+        # picked up two pre-existing (round-2-unrelated) latent bugs while
+        # verifying this: (1) debian_linux_11's own title for the UID-0
+        # control has 3 PDF-extraction-garbled variants in Postgres (page
+        # numbers/headers leaked into the title text) that the real Check
+        # already lists as aliases but this recipe never did -- would have
+        # shown as UNEXPLAINED against a debian container specifically;
+        # (2) the original command's GID (1000) and shell
+        # (/usr/sbin/nologin) combination now also breaks "Ensure all
+        # groups in /etc/passwd exist in /etc/group" (GID 1000 doesn't
+        # exist) and "Ensure accounts without a valid login shell are
+        # locked" (no matching shadow lock entry) -- fixed by pointing at
+        # GID 33 (www-data, always present) and adding a locked shadow
+        # entry for the new account.
         distro="any",
         check_titles=(
             "Ensure root is the only UID 0 account",
             "Verify No UID 0 Accounts Exist Other Than root",
+            "Configure root and system accounts and environment Page 637 Internal Only - General 5.4.2.1 Ensure root is the only UID 0 account",
+            "Configure root and system accounts and environment Page 671  5.4.2.1 Ensure root is the only UID 0 account",
+            "Configure root and system accounts and environment Page 677 Internal Only - General 5.4.2.1 Ensure root is the only UID 0 account",
+            "Ensure no duplicate UIDs exist",
         ),
         document=_BOTH_DOCS,
         description="a second UID-0 account (evildaemon) added to /etc/passwd",
-        commands=("sh -c \"echo 'evildaemon:x:0:1000::/nonexistent:/usr/sbin/nologin' >> /etc/passwd\"",),
+        commands=(
+            "sh -c \"echo 'evildaemon:x:0:33::/nonexistent:/usr/sbin/nologin' >> /etc/passwd\"",
+            "sh -c \"echo 'evildaemon:!:19000:0:99999:7:::' >> /etc/shadow\"",
+        ),
     ),
     Recipe(
         id="extra-gid0-account",
@@ -502,12 +531,32 @@ RECIPES: list[Recipe] = [
         check_titles=("Ensure root is the only GID 0 account",),
         document=_BOTH_DOCS,
         description="a second GID-0 primary group account (evilgroupuser) added to /etc/passwd",
-        commands=("sh -c \"echo 'evilgroupuser:x:1001:0::/nonexistent:/usr/sbin/nologin' >> /etc/passwd\"",),
+        # Shell is /bin/bash (a valid login shell), not /usr/sbin/nologin --
+        # found the hard way that nologin here silently also broke "Ensure
+        # accounts without a valid login shell are locked" (no matching
+        # shadow lock entry for the new account); UID 1001 is above
+        # UID_MIN so a valid shell doesn't trip the separate
+        # system-accounts-shell check either, unlike extra-uid0-account's
+        # UID-0 account above (which stays nologin + gets a locked shadow
+        # entry instead, since UID 0 *is* in scope for that check).
+        commands=("sh -c \"echo 'evilgroupuser:x:1001:0::/nonexistent:/bin/bash' >> /etc/passwd\"",),
     ),
     Recipe(
         id="extra-gid0-group",
         distro="any",
-        check_titles=("Ensure group root is the only GID 0 group",),
+        # A second group sharing GID 0 is unavoidably *also* a duplicate
+        # GID -- found the hard way running quickdemo.sh for real after
+        # round 2 added "Ensure no duplicate GIDs exist": this recipe
+        # produced a genuine second FAIL every time it landed on the same
+        # container as no compensating recipe, showing up as UNEXPLAINED
+        # rather than "today's story". Both titles are real, both are
+        # genuinely broken by this one command -- not a title-alias
+        # situation like the ssh-max-sessions recipe below, an actually
+        # different control that happens to share the same root cause.
+        check_titles=(
+            "Ensure group root is the only GID 0 group",
+            "Ensure no duplicate GIDs exist",
+        ),
         document=_BOTH_DOCS,
         description="a second group (evilgroup) added to /etc/group with GID 0",
         commands=("sh -c \"echo 'evilgroup:x:0:' >> /etc/group\"",),
@@ -530,10 +579,106 @@ RECIPES: list[Recipe] = [
         check_titles=("Ensure accounts in /etc/passwd use shadowed passwords",),
         document=_BOTH_DOCS,
         description="an account (legacyuser) added to /etc/passwd with a password hash in field 2 instead of 'x'",
+        # Primary group is 33 (www-data), not the original 1002 -- same
+        # "Ensure all groups in /etc/passwd exist in /etc/group" collateral
+        # bug fixed elsewhere in this file (1002 doesn't exist in
+        # /etc/group). Shell is /bin/bash, not /bin/false -- /bin/false
+        # isn't in /etc/shells and silently also broke "Ensure accounts
+        # without a valid login shell are locked" (no matching shadow lock
+        # entry); UID 1002 is above UID_MIN, so a real shell doesn't
+        # introduce any new interaction, and is arguably more realistic
+        # for a genuinely legacy, still-logged-into account anyway.
         commands=(
             "sh -c \"echo 'legacyuser:"
-            "\\$1\\$deadbeef\\$notarealhash:1002:1002::/home/legacyuser:/bin/false' >> /etc/passwd\"",
+            "\\$1\\$deadbeef\\$notarealhash:1002:33::/home/legacyuser:/bin/bash' >> /etc/passwd\"",
         ),
+    ),
+    # --- Round 2 additions (Groups L/Q): sshd_config directives + passwd/
+    # group consistency. All verified individually against a live container
+    # to break exactly the one named title and nothing else -- e.g. the
+    # first attempt at a duplicate-UID recipe reused www-data's real UID
+    # (33) with an /usr/sbin/nologin shell, which also silently flipped
+    # "Ensure accounts without a valid login shell are locked" (no matching
+    # locked shadow entry for the new name); switching to two brand-new
+    # fake accounts sharing a UID/GID neither above nor below UID_MIN's
+    # boundary in a way that trips the system-account-shell check (1500,
+    # comfortably above UID_MIN) avoided every such interaction.
+    Recipe(
+        id="ssh-max-auth-tries",
+        distro="any",
+        check_titles=("Ensure sshd MaxAuthTries is configured",),
+        document=_BOTH_DOCS,
+        description="sshd MaxAuthTries raised to 20 (above the 4-or-less ceiling)",
+        commands=("sed -i 's/^MaxAuthTries 4/MaxAuthTries 20/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-client-alive-disabled",
+        distro="any",
+        check_titles=("Ensure sshd ClientAliveInterval and ClientAliveCountMax are configured",),
+        document=_BOTH_DOCS,
+        description="sshd ClientAliveInterval dropped to 0 (disables the idle-session timeout)",
+        commands=("sed -i 's/^ClientAliveInterval 300/ClientAliveInterval 0/' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-banner-disabled",
+        distro="any",
+        check_titles=("Ensure sshd Banner is configured",),
+        document=_BOTH_DOCS,
+        description="sshd Banner set to the special value 'none' (disables the pre-login banner)",
+        commands=("sed -i 's|^Banner /etc/issue.net|Banner none|' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="ssh-access-unrestricted",
+        distro="any",
+        check_titles=("Ensure sshd access is configured",),
+        document=_BOTH_DOCS,
+        description="sshd AllowGroups directive removed (no Allow/Deny Users/Groups restriction left)",
+        commands=("sed -i '/^AllowGroups sshusers/d' /etc/ssh/sshd_config",),
+    ),
+    Recipe(
+        id="password-expiration-disabled",
+        distro="any",
+        check_titles=("Ensure password expiration is configured",),
+        document=_BOTH_DOCS,
+        description="login.defs PASS_MAX_DAYS raised to 99999 (effectively no expiration)",
+        commands=("sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS\\t99999/' /etc/login.defs",),
+    ),
+    Recipe(
+        id="duplicate-uid",
+        distro="any",
+        check_titles=("Ensure no duplicate UIDs exist",),
+        document=_BOTH_DOCS,
+        description="two new accounts (fakedupuid1/2) added to /etc/passwd sharing UID 1500",
+        # Primary group is 33 (www-data), not another fabricated id -- an
+        # earlier version used group 1500 too, which only happened to exist
+        # when the (independent, not-always-drawn) duplicate-gid recipe was
+        # also picked for the same container this run, otherwise silently
+        # broke "Ensure all groups in /etc/passwd exist in /etc/group" as
+        # an unrelated second FAIL. www-data's GID is guaranteed present on
+        # both hardened base images (confirmed empirically) and using it as
+        # a *referenced* primary group here doesn't itself create a
+        # duplicate /etc/group entry (only /etc/group's own GID column
+        # feeds that check).
+        commands=(
+            "printf 'fakedupuid1:x:1500:33::/nonexistent:/bin/bash\\n"
+            "fakedupuid2:x:1500:33::/nonexistent:/bin/bash\\n' >> /etc/passwd",
+        ),
+    ),
+    Recipe(
+        id="duplicate-gid",
+        distro="any",
+        check_titles=("Ensure no duplicate GIDs exist",),
+        document=_BOTH_DOCS,
+        description="two new groups (fakedupgid1/2) added to /etc/group sharing GID 1500",
+        commands=("printf 'fakedupgid1:x:1500:\\nfakedupgid2:x:1500:\\n' >> /etc/group",),
+    ),
+    Recipe(
+        id="shadow-group-not-empty",
+        distro="any",
+        check_titles=("Ensure shadow group is empty",),
+        document=_BOTH_DOCS,
+        description="root added as a member of the shadow group in /etc/group",
+        commands=("sed -i 's/^shadow:x:42:$/shadow:x:42:root/' /etc/group",),
     ),
 ]
 

@@ -11,28 +11,34 @@
 #
 # Goal: PASS every check in the "demo-eligible" subset documented in
 # docs/architecture/checks.md and scripts/quickdemo/misconfig_catalog.py --
-# the ~15 file-permission/ownership checks, ~12 sshd_config checks, and
-# ~PAM/login.defs/account-content checks that are pure config and
-# achievable via `docker exec`/apt-get with no packages beyond
-# openssh-server (already required by the base fetch/extract/import/assess
-# pipeline's own demo containers). Every other one of the 80 CHECKS in
-# src/invariant/assessment/__init__.py fails here the same structural way
-# it fails on the 6 dev/test containers (no sudo/cron/auditd/libpam-
-# pwquality installed) -- see checks.md for the documented list.
+# the file-permission/ownership, sshd_config, PAM/login.defs/account-content
+# checks that are pure config, plus (round 2 addition) a handful of real
+# packages (ufw/sudo/auditd/aide) whose entire point IS package presence --
+# there's no "pure config" way to pass a package-presence check. None of
+# these 4 start a service (no systemd in this container anyway); they're
+# installed purely so `installed_packages` reflects them. Every other CHECK
+# in src/invariant/assessment/__init__.py fails here the same structural
+# way it fails on the 6 dev/test containers (no cron/libpam-pwquality
+# installed, no real auditd rules configured, etc.) -- see checks.md for
+# the documented list.
 FROM ubuntu:20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssh-server \
+    && apt-get install -y --no-install-recommends \
+        openssh-server ufw sudo auditd audispd-plugins aide aide-common \
     && mkdir -p /run/sshd \
     && rm -rf /var/lib/apt/lists/*
 
-# --- sshd_config: same 12 demo-eligible sshd directives as the Debian
-# image, same values -- see that Dockerfile's comment for why each value
-# was chosen; confirmed to apply identically on ubuntu:20.04's older
+# --- sshd_config: same demo-eligible sshd directives as the Debian image,
+# same values -- see that Dockerfile's comment for why each value was
+# chosen; confirmed to apply identically on ubuntu:20.04's older
 # OpenSSH_8.2p1 (DisableForwarding included, since Debian/Ubuntu both
-# backport it ahead of upstream OpenSSH 8.7 -- confirmed via `sshd -T`).
+# backport it ahead of upstream OpenSSH 8.7 -- confirmed via `sshd -T`). The
+# last 4 lines are round 2's Group L additions -- see the Debian
+# Dockerfile's comment for why PermitEmptyPasswords/HostbasedAuthentication/
+# GSSAPIAuthentication need no directive here.
 RUN cat >> /etc/ssh/sshd_config <<'EOF'
 PermitRootLogin no
 PermitUserEnvironment no
@@ -46,6 +52,11 @@ Ciphers aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes1
 MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
 KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256
 MaxStartups 10:30:60
+MaxAuthTries 4
+ClientAliveInterval 300
+ClientAliveCountMax 3
+Banner /etc/issue.net
+AllowGroups sshusers
 EOF
 
 # --- file permissions/ownership: the 15 demo-eligible Group A/D checks.
@@ -75,7 +86,12 @@ RUN sed -i 's/pam_unix\.so nullok/pam_unix.so/' /etc/pam.d/common-auth \
     && sed -i 's/pam_unix\.so obscure sha512/pam_unix.so obscure sha512 use_authtok/' /etc/pam.d/common-password \
     && echo 'password    requisite           pam_pwhistory.so' >> /etc/pam.d/common-password \
     && sed -i 's/^UMASK\s.*/UMASK\t\t027/' /etc/login.defs \
-    && sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD SHA512/' /etc/login.defs
+    && sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD SHA512/' /etc/login.defs \
+    && sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS\t365/' /etc/login.defs
+
+# --- sudo (round 2 Group L/N/P additions): see the Debian Dockerfile's
+# comment -- same "Ensure sudo commands use pty" scope limitation.
+RUN echo 'Defaults        use_pty' >> /etc/sudoers
 
 # pwquality.conf/pwhistory.conf aren't shipped without libpam-pwquality
 # (not installed -- see above), but the CIS controls that grep them (Group

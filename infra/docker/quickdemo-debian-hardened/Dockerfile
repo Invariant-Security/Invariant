@@ -11,28 +11,35 @@
 #
 # Goal: PASS every check in the "demo-eligible" subset documented in
 # docs/architecture/checks.md and scripts/quickdemo/misconfig_catalog.py --
-# the ~15 file-permission/ownership checks, ~12 sshd_config checks, and
-# ~PAM/login.defs/account-content checks that are pure config and
-# achievable via `docker exec`/apt-get with no packages beyond
-# openssh-server (already required by the base fetch/extract/import/assess
-# pipeline's own demo containers). Every other one of the 80 CHECKS in
-# src/invariant/assessment/__init__.py fails here the same structural way
-# it fails on the 6 dev/test containers (no sudo/cron/auditd/libpam-
-# pwquality installed) -- see checks.md for the documented list.
+# the file-permission/ownership, sshd_config, PAM/login.defs/account-content
+# checks that are pure config, plus (round 2 addition) a handful of real
+# packages (ufw/sudo/auditd/aide) whose entire point IS package presence --
+# there's no "pure config" way to pass a package-presence check. None of
+# these 4 start a service (no systemd in this container anyway); they're
+# installed purely so `installed_packages` reflects them. Every other CHECK
+# in src/invariant/assessment/__init__.py fails here the same structural
+# way it fails on the 6 dev/test containers (no cron/libpam-pwquality
+# installed, no real auditd rules configured, etc.) -- see checks.md for
+# the documented list.
 FROM debian:11
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssh-server \
+    && apt-get install -y --no-install-recommends \
+        openssh-server ufw sudo auditd audispd-plugins aide aide-common \
     && mkdir -p /run/sshd \
     && rm -rf /var/lib/apt/lists/*
 
-# --- sshd_config: the 12 demo-eligible sshd directives (Groups D/F of
+# --- sshd_config: the demo-eligible sshd directives (Groups D/F/L of
 # src/invariant/assessment/__init__.py's CHECKS). Values chosen to satisfy
 # each evaluator exactly (see that module's evaluate_ssh_* docstrings for
 # the real CIS audit condition each one matches) -- e.g. Ciphers/MACs/
 # KexAlgorithms deliberately exclude the algorithms each evaluator's own
 # _WEAK_*_RE/_WEAK_* set flags, confirmed against a live `sshd -T` run
-# during development (see docs/architecture/checks.md).
+# during development (see docs/architecture/checks.md). The last 4 lines
+# are round 2's Group L additions -- PermitEmptyPasswords/
+# HostbasedAuthentication/GSSAPIAuthentication aren't listed because
+# OpenSSH's own secure defaults ("no" for all three) already satisfy those
+# checks with no directive needed.
 RUN cat >> /etc/ssh/sshd_config <<'EOF'
 PermitRootLogin no
 PermitUserEnvironment no
@@ -46,6 +53,11 @@ Ciphers aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes1
 MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
 KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256
 MaxStartups 10:30:60
+MaxAuthTries 4
+ClientAliveInterval 300
+ClientAliveCountMax 3
+Banner /etc/issue.net
+AllowGroups sshusers
 EOF
 
 # --- file permissions/ownership: the 15 demo-eligible Group A/D checks.
@@ -80,7 +92,14 @@ RUN sed -i 's/pam_unix\.so nullok/pam_unix.so/' /etc/pam.d/common-auth \
     && sed -i 's/pam_unix\.so obscure yescrypt/pam_unix.so obscure yescrypt use_authtok/' /etc/pam.d/common-password \
     && echo 'password    requisite           pam_pwhistory.so' >> /etc/pam.d/common-password \
     && sed -i 's/^UMASK\s.*/UMASK\t\t027/' /etc/login.defs \
-    && sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD SHA512/' /etc/login.defs
+    && sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD SHA512/' /etc/login.defs \
+    && sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS\t365/' /etc/login.defs
+
+# --- sudo (round 2 Group L/N/P additions): "Ensure sudo commands use pty"
+# needs a `Defaults ... use_pty` line in /etc/sudoers itself (facts.py only
+# collects /etc/sudoers, not /etc/sudoers.d/*, matching that evaluator's own
+# documented scope limit) -- sudo's own default sudoers doesn't set this.
+RUN echo 'Defaults        use_pty' >> /etc/sudoers
 
 # pwquality.conf/pwhistory.conf aren't shipped without libpam-pwquality
 # (not installed -- see above), but the CIS controls that grep them (Group
