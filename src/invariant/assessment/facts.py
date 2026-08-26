@@ -81,6 +81,7 @@ _TEXT_BLOCKS = [
     ("installed_packages_text", "===INSTALLED_PACKAGES===", "dpkg-query -W -f='${Package}\\n' 2>&1"),
     ("pwquality_text", "===PWQUALITY===", "cat /etc/security/pwquality.conf 2>&1"),
     ("pwhistory_text", "===PWHISTORY===", "cat /etc/security/pwhistory.conf 2>&1"),
+    ("faillock_text", "===FAILLOCK===", "cat /etc/security/faillock.conf 2>&1"),
     ("sudoers_text", "===SUDOERS===", "cat /etc/sudoers 2>&1"),
     ("shells_text", "===SHELLS===", "cat /etc/shells 2>&1"),
     ("rsyslog_text", "===RSYSLOG===", "cat /etc/rsyslog.conf 2>&1"),
@@ -146,6 +147,7 @@ class SystemFacts:
     installed_packages: set[str] = field(default_factory=set)
     pwquality_text: str = ""
     pwhistory_text: str = ""
+    faillock_text: str = ""
     sudoers_text: str = ""
     shells_text: str = ""
     rsyslog_text: str = ""
@@ -265,6 +267,7 @@ def _parse_collect_output(output: str) -> SystemFacts:
         installed_packages=_parse_installed_packages(text_values["installed_packages_text"]),
         pwquality_text=text_values["pwquality_text"],
         pwhistory_text=text_values["pwhistory_text"],
+        faillock_text=text_values["faillock_text"],
         sudoers_text=text_values["sudoers_text"],
         shells_text=text_values["shells_text"],
         rsyslog_text=text_values["rsyslog_text"],
