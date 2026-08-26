@@ -1473,6 +1473,114 @@ def _evidence_pam_pwhistory_use_authtok(facts: SystemFacts) -> str:
     )
 
 
+# Group K: two candidates added deliberately after the umask control (see
+# comment above Group F's CHECKS entries) was flagged as needing a facts.py
+# field this group's original scope didn't have. A third candidate, "Ensure
+# default user shell timeout is configured" (TMOUT), was looked at and
+# dropped -- see the module docstring notes below the CHECKS list.
+_PAM_WHEEL_RE = re.compile(r"^\s*auth\s+(?:required|requisite)\s+pam_wheel\.so\s+(.*)$", re.IGNORECASE)
+
+
+def _pam_su_restricted_group(facts: SystemFacts) -> str | None:
+    """Real audit (control "Ensure access to the su command is restricted",
+    identical audit text across all 6 real target documents, confirmed via
+    Postgres): `grep -Pi '^\\h*auth\\h+(?:required|requisite)\\h+pam_wheel
+    \\.so\\h+(?:[^#\\n\\r]+\\h+)?((?!\\2)(use_uid\\b|group=\\H+\\b))\\h+(?:
+    [^#\\n\\r]+\\h+)?((?!\\1)(use_uid\\b|group=\\H+\\b))(\\h+.*)?$'
+    /etc/pam.d/su` -- the negative-lookahead pattern's substance is "both
+    use_uid and group=<name> appear among the line's arguments, in either
+    order, without either being duplicated"; duplication itself isn't
+    modeled here (an edge case no real config hits), just "both tokens
+    present". Returns the group name from a qualifying line, or None if no
+    line in /etc/pam.d/su restricts su this way.
+    """
+    for line in facts.pam_su_text.splitlines():
+        match = _PAM_WHEEL_RE.match(line)
+        if not match:
+            continue
+        tokens = match.group(1).split()
+        has_use_uid = any(token.lower() == "use_uid" for token in tokens)
+        group_name = next(
+            (token.partition("=")[2] for token in tokens if token.lower().startswith("group=")), None
+        )
+        if has_use_uid and group_name:
+            return group_name
+    return None
+
+
+def _group_member_names(facts: SystemFacts, group_name: str) -> list[str] | None:
+    """The comma-separated member list (colon field 4) for `group_name` in
+    /etc/group, or None if the group doesn't exist at all.
+    """
+    for fields in _group_fields(facts.group_text):
+        if fields[0] == group_name:
+            members = fields[3] if len(fields) > 3 else ""
+            return [m for m in members.split(",") if m]
+    return None
+
+
+def _evaluate_su_restricted(facts: SystemFacts) -> bool:
+    group_name = _pam_su_restricted_group(facts)
+    if group_name is None:
+        return False
+    members = _group_member_names(facts, group_name)
+    # A named group that doesn't exist in /etc/group can't be verified
+    # empty -- fails closed, same posture as every other lookup-then-verify
+    # check in this module (e.g. _owner_ok's missing-stat handling).
+    return members is not None and len(members) == 0
+
+
+def _evidence_su_restricted(facts: SystemFacts) -> str:
+    group_name = _pam_su_restricted_group(facts)
+    if group_name is None:
+        return "/etc/pam.d/su: no 'auth required|requisite pam_wheel.so ... use_uid ... group=<name>' line found"
+    members = _group_member_names(facts, group_name)
+    if members is None:
+        return f"/etc/pam.d/su: group={group_name}; /etc/group: group not found"
+    return f"/etc/pam.d/su: group={group_name}; /etc/group members: {', '.join(members) or '<none>'}"
+
+
+_ROOT_UMASK_LINE_RE = re.compile(r"^[ \t]*umask[ \t]+(\S+)", re.IGNORECASE | re.MULTILINE)
+
+
+def _root_umask_weak_lines(facts: SystemFacts) -> list[str]:
+    """Lines in root's shell startup files (facts.root_shell_startup_text,
+    the concatenation of /root/.bash_profile, /root/.profile, and
+    /root/.bashrc -- see facts.py's comment on that field for why all three
+    are collected) that set a umask weaker than 0027, i.e. permissions less
+    restrictive than 750 (directories) / 640 (files). Real audit regex
+    differs cosmetically in form between documents (debian_linux_11 and
+    ubuntu_linux_20_04 use an older permission-bit-pattern regex;
+    debian_linux_12/13 and ubuntu_linux_22_04/24_04 use a newer
+    "^\\h*umask\\h+((\\d{1,2}(\\d[^7]|[^2-7]\\d)\\b)|...)" form) but both
+    encode the identical 0027 threshold, confirmed via Postgres audit text
+    on every document. Only numeric octal umask values are modeled here
+    (symbolic u=/g=/o= notation, which the real regex's second alternation
+    also covers, is not -- no demo target config uses it).
+    """
+    offending = []
+    for match in _ROOT_UMASK_LINE_RE.finditer(facts.root_shell_startup_text):
+        value = match.group(1)
+        try:
+            umask = int(value, 8)
+        except ValueError:
+            continue
+        if (umask & 0o027) != 0o027:
+            offending.append(match.group(0).strip())
+    return offending
+
+
+def _evaluate_root_umask(facts: SystemFacts) -> bool:
+    return len(_root_umask_weak_lines(facts)) == 0
+
+
+def _evidence_root_umask(facts: SystemFacts) -> str:
+    offending = _root_umask_weak_lines(facts)
+    if offending:
+        return "root shell startup files: umask weaker than 027 found: " + " | ".join(offending)
+    return "root shell startup files: no umask weaker than 027 found"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -2046,18 +2154,11 @@ CHECKS = [
         evidence=_evidence_bootloader_config_permissions,
     ),
     # Group F: remaining sshd_config directives + PAM/login.defs checks.
-    # Two assigned candidates were dropped -- title/semantics didn't hold
-    # up across all 6 real documents:
-    #   - "Ensure root user umask is configured": the real audit greps
-    #     `/root/.bash_profile`, `/root/.bashrc` (and, on debian_12/13 +
-    #     ubuntu_22_04/24_04, `/root/.profile` instead of .bash_profile)
-    #     for a umask line -- never /etc/login.defs or /etc/pam.d/login,
-    #     confirmed via Postgres audit text on every document. facts.py
-    #     collects neither root shell rc file, so this control can't be
-    #     evaluated from existing SystemFacts without adding a new field,
-    #     contrary to this group's assigned "zero new facts" scope --
-    #     left for a future group to add the collection field deliberately
-    #     rather than bolted on here as a side effect.
+    # One assigned candidate was dropped -- title/semantics didn't hold up
+    # across all 6 real documents (the root umask candidate flagged here
+    # originally is now implemented in Group K below, once facts.py grew
+    # the root_shell_startup_text field this group's "zero new facts" scope
+    # didn't allow for):
     #   - "Ensure root account access is controlled": resolves in 5 of 6
     #     documents (missing from debian_linux_11) with audit text "root
     #     password is either set (P) or locked (L)" via `passwd -S root`.
@@ -2105,6 +2206,31 @@ CHECKS = [
         titles=["Ensure pam_pwhistory includes use_authtok"],
         evaluate=_evaluate_pam_pwhistory_use_authtok,
         evidence=_evidence_pam_pwhistory_use_authtok,
+    ),
+    # Group K: see the comment block above these two definitions
+    # (_pam_su_restricted_group / _root_umask_weak_lines) for the real
+    # audit text each matches. A third candidate, "Ensure default user
+    # shell timeout is configured" (TMOUT), was looked at and dropped --
+    # its real audit spans an unbounded glob (/etc/profile.d/*.sh) and
+    # requires per-file co-location of value+readonly+export (debian_12/13
+    # + ubuntu_22_04/24_04) or a same-file all-three-conditions check plus
+    # a separate any-file "worse value" override scan (debian_11/
+    # ubuntu_20_04) -- two genuinely different pass/fail algorithms, not
+    # just cosmetic regex drift like the umask control above. Faithfully
+    # reproducing either needs facts.py to track which file each line came
+    # from, not just a flat concatenated blob; approximating it without
+    # that risks exactly the false PASS/FAIL this module's "no invented
+    # failure conditions" rule (docs/architecture/checks.md) warns against,
+    # so it's dropped rather than faked.
+    Check(
+        titles=["Ensure access to the su command is restricted"],
+        evaluate=_evaluate_su_restricted,
+        evidence=_evidence_su_restricted,
+    ),
+    Check(
+        titles=["Ensure root user umask is configured"],
+        evaluate=_evaluate_root_umask,
+        evidence=_evidence_root_umask,
     ),
 ]
 

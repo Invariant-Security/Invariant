@@ -86,6 +86,14 @@ _TEXT_BLOCKS = [
     ("rsyslog_text", "===RSYSLOG===", "cat /etc/rsyslog.conf 2>&1"),
     ("journald_text", "===JOURNALD===", "cat /etc/systemd/journald.conf 2>&1"),
     ("audit_rules_text", "===AUDIT_RULES===", "cat /etc/audit/rules.d/*.rules /etc/audit/audit.rules 2>&1"),
+    ("pam_su_text", "===PAM_SU===", "cat /etc/pam.d/su 2>&1"),
+    # The real audit for "Ensure root user umask is configured" checks
+    # different file pairs by document (/root/.bash_profile + /root/.bashrc
+    # on debian_linux_11/ubuntu_linux_20_04; /root/.profile + /root/.bashrc
+    # on every other real target document) -- concatenating all three here
+    # avoids per-document branching in facts.py; a missing file just yields
+    # its `cat` error text, same established pattern as every other block.
+    ("root_shell_startup_text", "===ROOT_SHELL_STARTUP===", "cat /root/.bash_profile /root/.profile /root/.bashrc 2>&1"),
 ]
 
 
@@ -151,6 +159,8 @@ class SystemFacts:
     rsyslog_text: str = ""
     journald_text: str = ""
     audit_rules_text: str = ""
+    pam_su_text: str = ""
+    root_shell_startup_text: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -270,6 +280,8 @@ def _parse_collect_output(output: str) -> SystemFacts:
         rsyslog_text=text_values["rsyslog_text"],
         journald_text=text_values["journald_text"],
         audit_rules_text=text_values["audit_rules_text"],
+        pam_su_text=text_values["pam_su_text"],
+        root_shell_startup_text=text_values["root_shell_startup_text"],
     )
 
 
