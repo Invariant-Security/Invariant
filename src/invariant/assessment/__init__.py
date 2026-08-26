@@ -1473,6 +1473,117 @@ def _evidence_pam_pwhistory_use_authtok(facts: SystemFacts) -> str:
     )
 
 
+# Group L: sshd_config directives (round 2). Real audit conditions for all
+# 7 confirmed identical across all 6 real target documents (debian_linux_
+# 11/12/13, ubuntu_linux_20_04/22_04/24_04) via Postgres before writing
+# these -- see the CHECKS entries below for per-control notes.
+def _evaluate_ssh_max_auth_tries(facts: SystemFacts) -> bool:
+    """Real audit: `sshd -T | grep maxauthtries`, MaxAuthTries must be 4 or
+    less."""
+    value = facts.sshd_config.get("maxauthtries", "")
+    try:
+        return int(value) <= 4
+    except ValueError:
+        return False
+
+
+def _evidence_ssh_max_auth_tries(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("maxauthtries", "<not set>")
+    return f"sshd_config: MaxAuthTries {value}"
+
+
+def _evaluate_ssh_permit_empty_passwords(facts: SystemFacts) -> bool:
+    return facts.sshd_config.get("permitemptypasswords", "").lower() == "no"
+
+
+def _evidence_ssh_permit_empty_passwords(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("permitemptypasswords", "<not set>")
+    return f"sshd_config: PermitEmptyPasswords {value}"
+
+
+def _evaluate_ssh_hostbased_authentication(facts: SystemFacts) -> bool:
+    return facts.sshd_config.get("hostbasedauthentication", "").lower() == "no"
+
+
+def _evidence_ssh_hostbased_authentication(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("hostbasedauthentication", "<not set>")
+    return f"sshd_config: HostbasedAuthentication {value}"
+
+
+def _evaluate_ssh_gssapi_authentication(facts: SystemFacts) -> bool:
+    return facts.sshd_config.get("gssapiauthentication", "").lower() == "no"
+
+
+def _evidence_ssh_gssapi_authentication(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("gssapiauthentication", "<not set>")
+    return f"sshd_config: GSSAPIAuthentication {value}"
+
+
+def _evaluate_ssh_client_alive(facts: SystemFacts) -> bool:
+    """Real audit: `sshd -T | grep -Pi -- '(clientaliveinterval|
+    clientalivecountmax)'`, both must be greater than zero -- one Check,
+    both conditions, since the real audit greps for both directives
+    together and there's no CIS control for either one alone.
+    """
+    try:
+        interval = int(facts.sshd_config.get("clientaliveinterval", ""))
+        count_max = int(facts.sshd_config.get("clientalivecountmax", ""))
+    except ValueError:
+        return False
+    return interval > 0 and count_max > 0
+
+
+def _evidence_ssh_client_alive(facts: SystemFacts) -> str:
+    interval = facts.sshd_config.get("clientaliveinterval", "<not set>")
+    count_max = facts.sshd_config.get("clientalivecountmax", "<not set>")
+    return f"sshd_config: ClientAliveInterval {interval}, ClientAliveCountMax {count_max}"
+
+
+def _evaluate_ssh_banner(facts: SystemFacts) -> bool:
+    """Partial check: real audit condition has two parts -- (1) Banner is
+    set to an absolute path (`sshd -T | grep -Pi -- '^banner\\h+\\/\\H+'`),
+    and (2), on debian_12/13 and ubuntu_22_04/24_04, that the banner
+    *file's content* doesn't leak OS info (a grep of that file's content
+    against /etc/os-release's ID). facts.py collects sshd_config but not
+    arbitrary banner file content, so only part (1) is checked here --
+    matching this project's existing precedent for "configured" (not
+    "correct value") checks (e.g. _evaluate_pwquality_enforce_for_root,
+    _evaluate_sudo_log_file_exists above), which verify a directive is
+    present/set rather than judging site-policy-dependent content.
+    """
+    value = facts.sshd_config.get("banner", "")
+    return value.startswith("/")
+
+
+def _evidence_ssh_banner(facts: SystemFacts) -> str:
+    value = facts.sshd_config.get("banner", "<not set>")
+    return f"sshd_config: Banner {value} (directive-set only, content not verified)"
+
+
+def _evaluate_ssh_access(facts: SystemFacts) -> bool:
+    """Real audit: `sshd -T | grep -Pi -- '^\\h*(allow|deny)(users|
+    groups)\\h+\\H+'` must match at least one of AllowUsers/AllowGroups/
+    DenyUsers/DenyGroups -- the real audit itself then asks a human to
+    review the actual list against site policy (CIS doesn't prescribe a
+    value), so presence of any one directive is the machine-checkable
+    bar, same "configured, not judged" posture as _evaluate_ssh_banner
+    above.
+    """
+    return any(
+        facts.sshd_config.get(directive, "")
+        for directive in ("allowusers", "allowgroups", "denyusers", "denygroups")
+    )
+
+
+def _evidence_ssh_access(facts: SystemFacts) -> str:
+    parts = [
+        f"{directive}={facts.sshd_config[directive]}"
+        for directive in ("allowusers", "allowgroups", "denyusers", "denygroups")
+        if facts.sshd_config.get(directive)
+    ]
+    return "sshd_config: " + (", ".join(parts) if parts else "none of AllowUsers/AllowGroups/DenyUsers/DenyGroups set")
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -2105,6 +2216,51 @@ CHECKS = [
         titles=["Ensure pam_pwhistory includes use_authtok"],
         evaluate=_evaluate_pam_pwhistory_use_authtok,
         evidence=_evidence_pam_pwhistory_use_authtok,
+    ),
+    # Group L: sshd_config directives (round 2). All 7 titles confirmed
+    # (via Postgres, full audit text read per document) identical across
+    # all 6 real target documents -- no dropped candidates this round.
+    Check(
+        titles=["Ensure sshd MaxAuthTries is configured"],
+        evaluate=_evaluate_ssh_max_auth_tries,
+        evidence=_evidence_ssh_max_auth_tries,
+    ),
+    Check(
+        titles=["Ensure sshd PermitEmptyPasswords is disabled"],
+        evaluate=_evaluate_ssh_permit_empty_passwords,
+        evidence=_evidence_ssh_permit_empty_passwords,
+    ),
+    Check(
+        titles=["Ensure sshd HostbasedAuthentication is disabled"],
+        evaluate=_evaluate_ssh_hostbased_authentication,
+        evidence=_evidence_ssh_hostbased_authentication,
+    ),
+    Check(
+        titles=["Ensure sshd GSSAPIAuthentication is disabled"],
+        evaluate=_evaluate_ssh_gssapi_authentication,
+        evidence=_evidence_ssh_gssapi_authentication,
+    ),
+    Check(
+        titles=["Ensure sshd ClientAliveInterval and ClientAliveCountMax are configured"],
+        evaluate=_evaluate_ssh_client_alive,
+        evidence=_evidence_ssh_client_alive,
+    ),
+    Check(
+        # Partial check -- see _evaluate_ssh_banner's docstring: the
+        # banner-file-content half of the real audit (checked against
+        # /etc/os-release on debian_12/13, ubuntu_22_04/24_04) isn't
+        # verified, only that Banner points at an absolute path.
+        titles=["Ensure sshd Banner is configured"],
+        evaluate=_evaluate_ssh_banner,
+        evidence=_evidence_ssh_banner,
+    ),
+    Check(
+        # Directive-presence only -- the real audit itself asks a human to
+        # review the actual user/group list against site policy, same as
+        # this project's other "configured, not judged" checks.
+        titles=["Ensure sshd access is configured"],
+        evaluate=_evaluate_ssh_access,
+        evidence=_evidence_ssh_access,
     ),
 ]
 
