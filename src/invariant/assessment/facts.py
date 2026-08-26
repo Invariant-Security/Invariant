@@ -86,6 +86,56 @@ _TEXT_BLOCKS = [
     ("rsyslog_text", "===RSYSLOG===", "cat /etc/rsyslog.conf 2>&1"),
     ("journald_text", "===JOURNALD===", "cat /etc/systemd/journald.conf 2>&1"),
     ("audit_rules_text", "===AUDIT_RULES===", "cat /etc/audit/rules.d/*.rules /etc/audit/audit.rules 2>&1"),
+    # The next 3 are full-filesystem `find` scans, not fixed-path reads --
+    # a different kind of collection than every block above. A container
+    # only has one real mount point (confirmed empirically: `findmnt -Dkerno
+    # fstype,target` never lists "/" itself in a container -- the real
+    # audit's own mount-enumeration loop would silently scan nothing), so
+    # these run `find / -xdev ...` directly instead of the real audit's
+    # findmnt-driven multi-mount loop; `-xdev` alone already keeps the scan
+    # from crossing into bind-mounted/pseudo filesystems (/proc, /sys,
+    # /dev, ...), which is all the real loop is for on a full VM. Timed at
+    # ~150-220ms each against a bare debian:12 container -- well inside the
+    # existing 10s timeout, no bump needed.
+    (
+        "world_writable_text",
+        "===WORLD_WRITABLE===",
+        r"find / -xdev \( -path '/run/user/*' -o -path '/proc/*' -o -path '*/containerd/*' "
+        r"-o -path '*/kubelet/*' -o -path '/sys/*' -o -path '/snap/*' \) -prune -o "
+        r"\( -type f -o -type d \) -perm -0002 -printf '%y:%m:%p\n' 2>&1",
+    ),
+    (
+        "unowned_text",
+        "===UNOWNED===",
+        r"find / -xdev \( -path '/run/user/*' -o -path '/proc/*' -o -path '*/containerd/*' "
+        r"-o -path '*/kubelet/pods/*' -o -path '*/kubelet/plugins/*' -o -path '/sys/fs/cgroup/memory/*' "
+        r"-o -path '/var/*/private/*' \) -prune -o \( -type f -o -type d \) \( -nouser -o -nogroup \) "
+        r"-printf '%y:%u:%g:%p\n' 2>&1",
+    ),
+    # Root's real PATH, the way an interactive root login shell would see
+    # it (the real audit reads it via `sudo -Hiu root env`/`sudo su - root
+    # -c env`; collection already executes as root inside the target via
+    # `docker exec`, and `sudo` isn't installed on 3 of the 6 real target
+    # documents' matching containers -- so this spawns root's own login
+    # shell directly instead, `bash -l`, which sources /etc/profile and
+    # root's own profile/rc chain -- unlike a plain `sh -c` that sources
+    # nothing). First line of output is the raw PATH string; each
+    # following line reports one ':'-separated component in order
+    # (`DIR:<path>:mode=.. uid=.. gid=.. gname=..` if it's a directory that
+    # exists, `NODIR:<path>` otherwise, `<path>` empty for a "::" or
+    # trailing ":" component) -- awk's `-F:` split (unlike shell word
+    # splitting) preserves empty fields the same way Python's `str.split(
+    # ":")` does, so the two line up positionally.
+    (
+        "root_path_probe_text",
+        "===ROOT_PATH_PROBE===",
+        "l_rp=\"$(bash -l -c 'echo $PATH' 2>&1)\"; printf '%s\\n' \"$l_rp\"; "
+        "printf '%s\\n' \"$l_rp\" | awk -F: '{for(i=1;i<=NF;i++) print $i}' | "
+        "while IFS= read -r l_p; do "
+        "if [ -n \"$l_p\" ] && [ -d \"$l_p\" ]; then printf 'DIR:%s:' \"$l_p\"; "
+        "stat -Lc 'mode=%a uid=%u gid=%g gname=%G' \"$l_p\" 2>&1; "
+        "else printf 'NODIR:%s\\n' \"$l_p\"; fi; done",
+    ),
 ]
 
 
@@ -151,6 +201,9 @@ class SystemFacts:
     rsyslog_text: str = ""
     journald_text: str = ""
     audit_rules_text: str = ""
+    world_writable_text: str = ""
+    unowned_text: str = ""
+    root_path_probe_text: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -270,6 +323,9 @@ def _parse_collect_output(output: str) -> SystemFacts:
         rsyslog_text=text_values["rsyslog_text"],
         journald_text=text_values["journald_text"],
         audit_rules_text=text_values["audit_rules_text"],
+        world_writable_text=text_values["world_writable_text"],
+        unowned_text=text_values["unowned_text"],
+        root_path_probe_text=text_values["root_path_probe_text"],
     )
 
 
