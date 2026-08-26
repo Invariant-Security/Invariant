@@ -2106,6 +2106,154 @@ def _evaluate_inactive_password_lock(facts: SystemFacts) -> bool:
     return True
 
 
+# Group K: full-filesystem scans (world-writable / unowned) and root's
+# PATH -- a different kind of check from every group above (a dynamic
+# `find` over the whole filesystem, or a dynamically-shaped PATH string,
+# rather than a fixed set of paths/config files), backed by the 3 new
+# facts.py text blocks documented there.
+def _parse_world_writable(text: str) -> tuple[list[str], list[str]]:
+    """Parses facts.world_writable_text ("f:<mode>:<path>" or
+    "d:<mode>:<path>" lines, one per world-writable file/dir found) into
+    (world-writable files, world-writable directories missing the sticky
+    bit) -- matches the real audit's l_smask=01000 test: a world-writable
+    directory only counts as a failure if the sticky bit is NOT set.
+    """
+    files = []
+    bad_dirs = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        ftype, mode_str, path = parts
+        try:
+            mode = int(mode_str, 8)
+        except ValueError:
+            continue
+        if ftype == "f":
+            files.append(path)
+        elif ftype == "d" and not (mode & 0o1000):
+            bad_dirs.append(path)
+    return files, bad_dirs
+
+
+def _evaluate_world_writable_secured(facts: SystemFacts) -> bool:
+    """Real audit (control "Ensure world writable files and directories are
+    secured", identical title and audit shape across all 6 real target
+    documents): find every world-writable (mode & 0002) file or directory
+    under every real mount point. PASS requires zero world-writable files,
+    and every world-writable directory must carry the sticky bit (01000).
+    """
+    files, bad_dirs = _parse_world_writable(facts.world_writable_text)
+    return not files and not bad_dirs
+
+
+def _evidence_world_writable_secured(facts: SystemFacts) -> str:
+    files, bad_dirs = _parse_world_writable(facts.world_writable_text)
+    if not files and not bad_dirs:
+        return "no world-writable files; sticky bit set on all world-writable directories"
+    parts = []
+    if files:
+        parts.append(f"world-writable files: {', '.join(files)}")
+    if bad_dirs:
+        parts.append(f"world-writable directories without sticky bit: {', '.join(bad_dirs)}")
+    return "; ".join(parts)
+
+
+def _parse_unowned(text: str) -> list[str]:
+    """Parses facts.unowned_text ("f:<uid>:<gid>:<path>" or
+    "d:<uid>:<gid>:<path>" lines) into a flat path list -- the real audit
+    tracks unowned and ungrouped separately, but both are the same PASS/
+    FAIL condition here (zero of either), so a single combined list is
+    enough to evaluate; evidence still reports the raw path either way.
+    """
+    paths = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(":", 3)
+        if len(parts) != 4:
+            continue
+        paths.append(parts[3])
+    return paths
+
+
+def _evaluate_no_unowned_files(facts: SystemFacts) -> bool:
+    """Real audit (control "Ensure no files or directories without an
+    owner and a group exist", identical title and audit shape across all
+    6 real target documents): find every file/dir under every real mount
+    point with no resolvable owning user or group. PASS requires zero
+    results.
+    """
+    return len(_parse_unowned(facts.unowned_text)) == 0
+
+
+def _evidence_no_unowned_files(facts: SystemFacts) -> str:
+    paths = _parse_unowned(facts.unowned_text)
+    if not paths:
+        return "no files or directories without an owner or group found"
+    return f"unowned/ungrouped: {', '.join(paths)}"
+
+
+def _root_path_entries(facts: SystemFacts) -> tuple[str, list[tuple[str, dict[str, str] | None]]]:
+    """Splits facts.root_path_probe_text into (raw PATH string, per-
+    component detail) -- the first line is the raw PATH, each following
+    line is that component's stat detail in the same order (see facts.py's
+    comment above root_path_probe_text for why the two line up
+    positionally). A component's detail is None when it wasn't a directory
+    that exists (covers a missing path, a non-directory, an empty "::" /
+    trailing ":" component, and "." itself, which is also always a valid
+    existing directory -- the caller rejects it by name, not by this).
+    """
+    lines = facts.root_path_probe_text.splitlines()
+    raw_path = lines[0] if lines else ""
+    entries: list[tuple[str, dict[str, str] | None]] = []
+    for line in lines[1:]:
+        if line.startswith("DIR:"):
+            path, _, stat_text = line[len("DIR:") :].partition(":")
+            fields = dict(tok.split("=", 1) for tok in stat_text.split() if "=" in tok)
+            entries.append((path, fields))
+        elif line.startswith("NODIR:"):
+            entries.append((line[len("NODIR:") :], None))
+    return raw_path, entries
+
+
+_ROOT_PATH_PMASK = 0o022  # real audit's l_pmask: reject group/other write
+
+
+def _evaluate_root_path_integrity(facts: SystemFacts) -> bool:
+    """Real audit (control "Ensure root path integrity", identical title
+    and audit shape across all 6 real target documents): root's PATH must
+    have no empty ("::") component, no trailing ":", no "." (current
+    working directory) component, and every remaining component must be
+    an absolute, existing directory owned by root with mode 0755 or
+    stricter (no group/other write bit). See facts.py's comment on
+    root_path_probe_text for how root's PATH is captured without sudo/su.
+    """
+    raw_path, entries = _root_path_entries(facts)
+    if not raw_path or "::" in raw_path or raw_path.endswith(":"):
+        return False
+    components = raw_path.split(":")
+    if "." in components:
+        return False
+    if len(entries) != len(components):
+        return False
+    for path, stat in entries:
+        if not path or not path.startswith("/") or stat is None:
+            return False
+        try:
+            mode = int(stat.get("mode", ""), 8)
+            uid = int(stat.get("uid", ""))
+        except ValueError:
+            return False
+        if uid != 0 or (mode & _ROOT_PATH_PMASK):
+            return False
+    return True
+
+
 def _evidence_inactive_password_lock(facts: SystemFacts) -> str:
     offending = [
         f"{fields[0]} (INACTIVE={fields[6] or 0})"
@@ -2635,6 +2783,9 @@ def _evidence_root_umask(facts: SystemFacts) -> str:
     if offending:
         return "root shell startup files: umask weaker than 027 found: " + " | ".join(offending)
     return "root shell startup files: no umask weaker than 027 found"
+def _evidence_root_path_integrity(facts: SystemFacts) -> str:
+    raw_path, _ = _root_path_entries(facts)
+    return f"root PATH: {raw_path or '<empty>'}"
 
 
 @dataclass
@@ -3571,6 +3722,23 @@ CHECKS = [
         titles=["Ensure root user umask is configured"],
         evaluate=_evaluate_root_umask,
         evidence=_evidence_root_umask,
+    ),
+    # Group T: full-filesystem scans + root's PATH -- see the comment above
+    # this group's evaluate()/evidence() functions.
+    Check(
+        titles=["Ensure world writable files and directories are secured"],
+        evaluate=_evaluate_world_writable_secured,
+        evidence=_evidence_world_writable_secured,
+    ),
+    Check(
+        titles=["Ensure no files or directories without an owner and a group exist"],
+        evaluate=_evaluate_no_unowned_files,
+        evidence=_evidence_no_unowned_files,
+    ),
+    Check(
+        titles=["Ensure root path integrity"],
+        evaluate=_evaluate_root_path_integrity,
+        evidence=_evidence_root_path_integrity,
     ),
 ]
 
