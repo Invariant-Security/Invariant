@@ -24,6 +24,7 @@ it against a real target before it becomes a real Check here.
 """
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
@@ -1845,6 +1846,120 @@ def _evidence_aide_installed(facts: SystemFacts) -> str:
     return f"installed_packages: aide/aide-common {'both present' if not missing else 'missing: ' + ','.join(missing)}"
 
 
+# Group Q: passwd/group consistency (round 2). Reuses _passwd_fields()/
+# _group_fields() from Group B above -- no new parsing helpers, no
+# facts.py changes.
+#
+# "Ensure no duplicate user names exist" was looked at and dropped: its
+# real audit (confirmed via Postgres) is genuinely different in
+# debian_linux_11 vs the other 5 documents. In debian_linux_11 the outer
+# loop reads `cut -f1 -d":" /etc/group` (group names) while the other 5
+# documents read `cut -f1 -d":" /etc/passwd` (user names) under the exact
+# same title and the exact same inner awk. That's a real bug in that one
+# document (looks like a copy/paste from the neighboring "duplicate group
+# names" control), not an intentional wording/scope variant -- there's no
+# way to write one evaluate() that's faithful to debian_linux_11's actual
+# (buggy) audit script and also faithful to the other 5 without either
+# silently "fixing" debian_11's real document or silently mislabeling a
+# group-name check as a user-name check for the other 5. Dropped rather
+# than guessing which side is "right".
+
+
+def _evaluate_no_duplicate_uids(facts: SystemFacts) -> bool:
+    """Real audit (all 6 documents, identical): `cut -f3 -d":" /etc/passwd
+    | sort -n | uniq -c` -- fails if any UID (passwd field 3) appears more
+    than once.
+    """
+    uids = [fields[2] for fields in _passwd_fields(facts.passwd_text)]
+    return len(uids) == len(set(uids))
+
+
+def _evidence_no_duplicate_uids(facts: SystemFacts) -> str:
+    uids = [fields[2] for fields in _passwd_fields(facts.passwd_text)]
+    dupes = sorted(uid for uid, count in Counter(uids).items() if count > 1)
+    return f"/etc/passwd: duplicate UIDs: {', '.join(dupes) or '<none>'}"
+
+
+def _evaluate_no_duplicate_gids(facts: SystemFacts) -> bool:
+    """Real audit (all 6 documents, identical): `cut -f3 -d":" /etc/group
+    | sort -n | uniq -c` -- fails if any GID (group field 3) appears more
+    than once.
+    """
+    gids = [fields[2] for fields in _group_fields(facts.group_text)]
+    return len(gids) == len(set(gids))
+
+
+def _evidence_no_duplicate_gids(facts: SystemFacts) -> str:
+    gids = [fields[2] for fields in _group_fields(facts.group_text)]
+    dupes = sorted(gid for gid, count in Counter(gids).items() if count > 1)
+    return f"/etc/group: duplicate GIDs: {', '.join(dupes) or '<none>'}"
+
+
+def _evaluate_no_duplicate_group_names(facts: SystemFacts) -> bool:
+    """Real audit (all 6 documents, identical): `cut -f1 -d":" /etc/group
+    | sort -n | uniq -c` -- fails if any group name (group field 1)
+    appears more than once.
+    """
+    names = [fields[0] for fields in _group_fields(facts.group_text)]
+    return len(names) == len(set(names))
+
+
+def _evidence_no_duplicate_group_names(facts: SystemFacts) -> str:
+    names = [fields[0] for fields in _group_fields(facts.group_text)]
+    dupes = sorted(name for name, count in Counter(names).items() if count > 1)
+    return f"/etc/group: duplicate group names: {', '.join(dupes) or '<none>'}"
+
+
+def _evaluate_passwd_groups_exist_in_group(facts: SystemFacts) -> bool:
+    """Real audit (all 6 documents, identical shape): every primary GID
+    referenced in /etc/passwd (field 4) must exist as a GID (field 3) in
+    /etc/group.
+    """
+    group_gids = {fields[2] for fields in _group_fields(facts.group_text)}
+    passwd_gids = {fields[3] for fields in _passwd_fields(facts.passwd_text)}
+    return passwd_gids <= group_gids
+
+
+def _evidence_passwd_groups_exist_in_group(facts: SystemFacts) -> str:
+    group_gids = {fields[2] for fields in _group_fields(facts.group_text)}
+    orphans = [
+        f"{fields[0]} (GID {fields[3]})" for fields in _passwd_fields(facts.passwd_text) if fields[3] not in group_gids
+    ]
+    return f"/etc/passwd: users with GID missing from /etc/group: {', '.join(orphans) or '<none>'}"
+
+
+def _evaluate_shadow_group_empty(facts: SystemFacts) -> bool:
+    """Real audit (all 6 documents, identical): the `shadow` group's
+    member list (/etc/group field 4) must be empty, AND no account's
+    primary GID (/etc/passwd field 4) may equal the shadow group's GID.
+    Both conditions must hold for PASS.
+    """
+    shadow_groups = [fields for fields in _group_fields(facts.group_text) if fields[0] == "shadow"]
+    if not shadow_groups:
+        return True
+    fields = shadow_groups[0]
+    members = fields[3] if len(fields) > 3 else ""
+    if members.strip():
+        return False
+    shadow_gid = fields[2]
+    primary_gid_users = [f[0] for f in _passwd_fields(facts.passwd_text) if f[3] == shadow_gid]
+    return not primary_gid_users
+
+
+def _evidence_shadow_group_empty(facts: SystemFacts) -> str:
+    shadow_groups = [fields for fields in _group_fields(facts.group_text) if fields[0] == "shadow"]
+    if not shadow_groups:
+        return "/etc/group: no shadow group present"
+    fields = shadow_groups[0]
+    members = fields[3] if len(fields) > 3 else ""
+    shadow_gid = fields[2]
+    primary_gid_users = [f[0] for f in _passwd_fields(facts.passwd_text) if f[3] == shadow_gid]
+    return (
+        f"/etc/group: shadow group members: {members or '<none>'}; "
+        f"primary-GID-shadow users: {', '.join(primary_gid_users) or '<none>'}"
+    )
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -2650,6 +2765,32 @@ CHECKS = [
         titles=["Ensure AIDE is installed"],
         evaluate=_evaluate_aide_installed,
         evidence=_evidence_aide_installed,
+    ),
+    # Group Q: passwd/group consistency (round 2)
+    Check(
+        titles=["Ensure no duplicate UIDs exist"],
+        evaluate=_evaluate_no_duplicate_uids,
+        evidence=_evidence_no_duplicate_uids,
+    ),
+    Check(
+        titles=["Ensure no duplicate GIDs exist"],
+        evaluate=_evaluate_no_duplicate_gids,
+        evidence=_evidence_no_duplicate_gids,
+    ),
+    Check(
+        titles=["Ensure no duplicate group names exist"],
+        evaluate=_evaluate_no_duplicate_group_names,
+        evidence=_evidence_no_duplicate_group_names,
+    ),
+    Check(
+        titles=["Ensure all groups in /etc/passwd exist in /etc/group"],
+        evaluate=_evaluate_passwd_groups_exist_in_group,
+        evidence=_evidence_passwd_groups_exist_in_group,
+    ),
+    Check(
+        titles=["Ensure shadow group is empty"],
+        evaluate=_evaluate_shadow_group_empty,
+        evidence=_evidence_shadow_group_empty,
     ),
 ]
 
