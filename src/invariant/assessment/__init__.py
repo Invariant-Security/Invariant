@@ -25,7 +25,7 @@ it against a real target before it becomes a real Check here.
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Callable
 
 from invariant.assessment.facts import SystemFacts, collect_facts
@@ -1473,6 +1473,368 @@ def _evidence_pam_pwhistory_use_authtok(facts: SystemFacts) -> str:
     )
 
 
+# Group P: shadow/login.defs/sudoers/pwquality (round 2). Reuses
+# _passwd_fields() (the shared shadow/passwd colon-parser already used by
+# Group B above) and parse_login_defs()/parse_pwquality_conf() -- no new
+# facts.py fields needed, every field these 8 checks read (shadow_text,
+# login_defs_text, shells_text, sudoers_text, pwquality_text,
+# pam_common_password) is already collected. All 8 assigned candidates
+# turned out to be real controls with identical title text, threshold, and
+# audit condition across all 6 real target documents -- none dropped.
+
+
+def _has_real_password(fields: list[str]) -> bool:
+    """Shared by every /etc/shadow control below that only applies to
+    accounts with a real password hash: shadow field 2 (colon index 1)
+    matching `^\\$.+\\$` -- the exact awk test every real audit script in
+    this group uses (`$2~/^\\$.+\\$/`) to skip locked (`!`/`!!`), empty, or
+    `*`-disabled accounts.
+    """
+    return len(fields) > 1 and bool(re.match(r"^\$.+\$", fields[1]))
+
+
+def _awk_int(value: str) -> int:
+    """Mirrors awk's own numeric coercion of a bare field reference used by
+    every `if($N > ...)`-style audit below: an empty string (a shadow
+    field genuinely left blank -- INACTIVE/PASS_MAX_DAYS/PASS_WARN_AGE
+    never explicitly set for that account) numifies to 0, not an error.
+    """
+    return int(value) if value else 0
+
+
+def _evaluate_inactive_password_lock(facts: SystemFacts) -> bool:
+    """Real audit (control 5.4.1.5, identical INACTIVE<=45 threshold and
+    awk condition confirmed across all 6 real target documents): `awk -F:
+    '($2~/^\\$.+\\$/) {if($7 > 45 || $7 < 0)print ...}' /etc/shadow` must
+    return nothing -- every password-having user's shadow field 7
+    (INACTIVE) must be in [0, 45].
+    """
+    for fields in _passwd_fields(facts.shadow_text):
+        if len(fields) < 7 or not _has_real_password(fields):
+            continue
+        inactive = _awk_int(fields[6])
+        if inactive > 45 or inactive < 0:
+            return False
+    return True
+
+
+def _evidence_inactive_password_lock(facts: SystemFacts) -> str:
+    offending = [
+        f"{fields[0]} (INACTIVE={fields[6] or 0})"
+        for fields in _passwd_fields(facts.shadow_text)
+        if len(fields) >= 7
+        and _has_real_password(fields)
+        and (_awk_int(fields[6]) > 45 or _awk_int(fields[6]) < 0)
+    ]
+    if offending:
+        return "/etc/shadow: INACTIVE outside [0, 45] for: " + ", ".join(offending)
+    return "/etc/shadow: all password-having users have INACTIVE in [0, 45]"
+
+
+_EPOCH = date(1970, 1, 1)
+
+
+def _evaluate_last_password_change_in_past(facts: SystemFacts) -> bool:
+    """Real audit (control 5.4.1.6, identical script across all 6 real
+    target documents): for every password-having user, converts shadow
+    field 3 (days since epoch of last password change) back to a date via
+    `chage --list` and fails if that's later than `date +%s` (now) -- last
+    password change may never be in the future. An empty field 3 (`chage`
+    reports "never", filtered out of the real script's own comparison by
+    `grep -v 'never$'`) is treated as "not in the future" here (0 is never
+    later than today's epoch day).
+    """
+    today = (datetime.now(timezone.utc).date() - _EPOCH).days
+    for fields in _passwd_fields(facts.shadow_text):
+        if len(fields) < 3 or not _has_real_password(fields):
+            continue
+        raw = fields[2]
+        if raw == "":
+            continue
+        try:
+            last_change = int(raw)
+        except ValueError:
+            continue
+        if last_change > today:
+            return False
+    return True
+
+
+def _evidence_last_password_change_in_past(facts: SystemFacts) -> str:
+    today = (datetime.now(timezone.utc).date() - _EPOCH).days
+    offending = []
+    for fields in _passwd_fields(facts.shadow_text):
+        if len(fields) < 3 or not _has_real_password(fields) or fields[2] == "":
+            continue
+        try:
+            last_change = int(fields[2])
+        except ValueError:
+            continue
+        if last_change > today:
+            offending.append(f"{fields[0]} (day {last_change}, today is day {today})")
+    if offending:
+        return "/etc/shadow: last password change in the future for: " + ", ".join(offending)
+    return "/etc/shadow: no user's last password change is in the future"
+
+
+def _evaluate_password_expiration_configured(facts: SystemFacts) -> bool:
+    """Real audit (control 5.4.1.1, identical PASS_MAX_DAYS<=365 threshold
+    and shadow field 5 (0, 365] range confirmed across all 6 real target
+    documents): `grep -Pi -- '^\\h*PASS_MAX_DAYS\\h+\\d+\\b'
+    /etc/login.defs` must show 365 or less, AND `awk -F: '($2~/^\\$.+\\$/)
+    {if($5 > 365 || $5 < 1)print ...}' /etc/shadow` must return nothing.
+    """
+    value = parse_login_defs(facts.login_defs_text).get("PASS_MAX_DAYS")
+    try:
+        if int(value) > 365:
+            return False
+    except (TypeError, ValueError):
+        return False
+    for fields in _passwd_fields(facts.shadow_text):
+        if len(fields) < 5 or not _has_real_password(fields):
+            continue
+        max_days = _awk_int(fields[4])
+        if max_days > 365 or max_days < 1:
+            return False
+    return True
+
+
+def _evidence_password_expiration_configured(facts: SystemFacts) -> str:
+    value = parse_login_defs(facts.login_defs_text).get("PASS_MAX_DAYS", "<not set>")
+    offending = [
+        f"{fields[0]} (PASS_MAX_DAYS={fields[4] or 0})"
+        for fields in _passwd_fields(facts.shadow_text)
+        if len(fields) >= 5
+        and _has_real_password(fields)
+        and (_awk_int(fields[4]) > 365 or _awk_int(fields[4]) < 1)
+    ]
+    return f"login.defs: PASS_MAX_DAYS {value}; /etc/shadow outside (0, 365]: " + (", ".join(offending) or "<none>")
+
+
+def _evaluate_password_expiration_warning_configured(facts: SystemFacts) -> bool:
+    """Real audit (control 5.4.1.3, identical PASS_WARN_AGE>=7 threshold
+    confirmed across all 6 real target documents): `grep -Pi --
+    '^\\h*PASS_WARN_AGE\\h+\\d+\\b' /etc/login.defs` must show 7 or more,
+    AND `awk -F: '($2~/^\\$.+\\$/) {if($6 < 7)print ...}' /etc/shadow` must
+    return nothing.
+    """
+    value = parse_login_defs(facts.login_defs_text).get("PASS_WARN_AGE")
+    try:
+        if int(value) < 7:
+            return False
+    except (TypeError, ValueError):
+        return False
+    for fields in _passwd_fields(facts.shadow_text):
+        if len(fields) < 6 or not _has_real_password(fields):
+            continue
+        if _awk_int(fields[5]) < 7:
+            return False
+    return True
+
+
+def _evidence_password_expiration_warning_configured(facts: SystemFacts) -> str:
+    value = parse_login_defs(facts.login_defs_text).get("PASS_WARN_AGE", "<not set>")
+    offending = [
+        f"{fields[0]} (PASS_WARN_AGE={fields[5] or 0})"
+        for fields in _passwd_fields(facts.shadow_text)
+        if len(fields) >= 6 and _has_real_password(fields) and _awk_int(fields[5]) < 7
+    ]
+    return f"login.defs: PASS_WARN_AGE {value}; /etc/shadow below 7: " + (", ".join(offending) or "<none>")
+
+
+def _valid_login_shells(facts: SystemFacts) -> set[str]:
+    """Real, working login shells listed in /etc/shells -- excludes any
+    nologin-style entry (basename "nologin"), matching the exact
+    `l_valid_shells` construction shared by controls 5.4.2.7 and 5.4.2.8
+    (`awk -F\\/ '$NF != "nologin" {print}' /etc/shells`).
+    """
+    shells = set()
+    for line in facts.shells_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.rsplit("/", 1)[-1] == "nologin":
+            continue
+        shells.add(stripped)
+    return shells
+
+
+def _uid_min(facts: SystemFacts) -> int | None:
+    value = parse_login_defs(facts.login_defs_text).get("UID_MIN")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+_SYSTEM_ACCOUNT_LOGIN_SHELL_EXCLUDED_NAMES = ("root", "halt", "sync", "shutdown", "nfsnobody")
+
+
+def _system_accounts_with_valid_shell(facts: SystemFacts) -> list[str]:
+    uid_min = _uid_min(facts)
+    if uid_min is None:
+        return []
+    valid_shells = _valid_login_shells(facts)
+    offending = []
+    for fields in _passwd_fields(facts.passwd_text):
+        if len(fields) < 7:
+            continue
+        name, uid_str, shell = fields[0], fields[2], fields[-1]
+        if name in _SYSTEM_ACCOUNT_LOGIN_SHELL_EXCLUDED_NAMES:
+            continue
+        try:
+            uid = int(uid_str)
+        except ValueError:
+            continue
+        if not (uid < uid_min or uid == 65534):
+            continue
+        if shell in valid_shells:
+            offending.append(f"{name} (uid={uid}, shell={shell})")
+    return offending
+
+
+def _evaluate_system_accounts_no_valid_shell(facts: SystemFacts) -> bool:
+    """Real audit (control 5.4.2.7, identical exclusion list -- root, halt,
+    sync, shutdown, nfsnobody -- and UID condition confirmed across all 6
+    real target documents): system accounts (UID < login.defs' UID_MIN, or
+    UID 65534) other than the excluded names must not have a shell from
+    /etc/shells' `l_valid_shells` set (see _valid_login_shells()). Fails
+    closed (can't be evaluated as compliant) if UID_MIN isn't set in
+    login.defs, since the audit condition depends on it entirely.
+    """
+    if _uid_min(facts) is None:
+        return False
+    return len(_system_accounts_with_valid_shell(facts)) == 0
+
+
+def _evidence_system_accounts_no_valid_shell(facts: SystemFacts) -> str:
+    uid_min = _uid_min(facts)
+    offending = _system_accounts_with_valid_shell(facts)
+    return f"login.defs: UID_MIN {uid_min if uid_min is not None else '<not set>'}; system accounts with a valid login shell: " + (
+        ", ".join(offending) or "<none>"
+    )
+
+
+def _accounts_without_valid_shell_not_locked(facts: SystemFacts) -> list[str]:
+    valid_shells = _valid_login_shells(facts)
+    # Confirmed empirically against a live container: `passwd -S` reports
+    # "L" (locked) for a shadow field 2 starting with either "!" (the
+    # conventional lock marker) or "*" (the convention for system accounts
+    # that were never given a real password) -- not "!" alone.
+    locked = {
+        fields[0]: fields[1].startswith(("!", "*"))
+        for fields in _passwd_fields(facts.shadow_text)
+        if len(fields) > 1
+    }
+    offending = []
+    for fields in _passwd_fields(facts.passwd_text):
+        if len(fields) < 7:
+            continue
+        name, shell = fields[0], fields[-1]
+        if name == "root" or shell in valid_shells:
+            continue
+        if not locked.get(name, False):
+            offending.append(f"{name} (shell={shell})")
+    return offending
+
+
+def _evaluate_accounts_without_shell_locked(facts: SystemFacts) -> bool:
+    """Real audit (control 5.4.2.8, identical across all 6 real target
+    documents): every non-root account whose shell isn't in the
+    `l_valid_shells` set (see _valid_login_shells()) must be locked, per
+    `passwd -S` reporting `L`. `passwd -S`'s L/P/NP status reads straight
+    off /etc/shadow's own password field (a `!`/`!!`-prefixed hash =
+    locked) -- the same "read the underlying shadow state directly instead
+    of shelling out to passwd -S" substitution facts.py's own docstring
+    establishes for every check in this module; no live command runs here.
+    """
+    return len(_accounts_without_valid_shell_not_locked(facts)) == 0
+
+
+def _evidence_accounts_without_shell_locked(facts: SystemFacts) -> str:
+    offending = _accounts_without_valid_shell_not_locked(facts)
+    if offending:
+        return "/etc/passwd: accounts without a valid shell and not locked: " + ", ".join(offending)
+    return "/etc/passwd: every non-root account without a valid shell is locked"
+
+
+def _sudoers_defaults_tokens(line: str) -> list[str]:
+    """Splits a plain global `Defaults <comma-separated-options>` active
+    sudoers line into its individual option tokens (e.g.
+    "env_reset,mail_badpass,use_pty" -> ["env_reset", "mail_badpass",
+    "use_pty"]) -- only that global form is handled (not the
+    `Defaults:user`/`Defaults@host` scoped forms), matching the exact
+    remediation example every real target document's audit text shows
+    ("/etc/sudoers:Defaults use_pty").
+    """
+    parts = line.split("#", 1)[0].split(None, 1)
+    if len(parts) < 2 or parts[0].lower() != "defaults":
+        return []
+    return [token.strip() for token in parts[1].split(",")]
+
+
+def _evaluate_sudo_use_pty(facts: SystemFacts) -> bool:
+    """Real audit (control 5.2.2 -- debian_linux_11's regex is written
+    slightly more strictly, anchored to end-of-line, than the other 5
+    documents, but checks the same two things, confirmed via Postgres): a
+    `Defaults ... use_pty` line must be present in /etc/sudoers*, AND no
+    `Defaults ... !use_pty` (negated) line may be present.
+    facts.sudoers_text only covers /etc/sudoers itself, not
+    /etc/sudoers.d/* -- same scope limitation already accepted for
+    _evaluate_sudo_no_nopasswd/_evaluate_sudo_reauthentication_required
+    above (doesn't chase every override layer).
+    """
+    has_positive = False
+    has_negated = False
+    for line in _sudoers_active_lines(facts.sudoers_text):
+        for token in _sudoers_defaults_tokens(line):
+            if token == "use_pty":
+                has_positive = True
+            elif token == "!use_pty":
+                has_negated = True
+    return has_positive and not has_negated
+
+
+def _evidence_sudo_use_pty(facts: SystemFacts) -> str:
+    tokens = [t for line in _sudoers_active_lines(facts.sudoers_text) for t in _sudoers_defaults_tokens(line)]
+    if "!use_pty" in tokens:
+        return "sudoers: Defaults !use_pty found (negated)"
+    if "use_pty" in tokens:
+        return "sudoers: Defaults use_pty found"
+    return "sudoers: no Defaults use_pty line found"
+
+
+_PAM_PWQUALITY_DICTCHECK_RE = re.compile(r"\bdictcheck\s*=\s*0\b")
+
+
+def _evaluate_pwquality_dictcheck(facts: SystemFacts) -> bool:
+    """Real audit (control 5.3.3.2.6, identical across all 6 real target
+    documents): dictcheck must NOT be explicitly set to 0 (disabled),
+    either in pwquality.conf or as a pam_pwquality.so module argument on
+    common-password -- PASS if neither location disables it (dictcheck
+    defaults to enabled when left unset).
+    """
+    value = parse_pwquality_conf(facts.pwquality_text).get("dictcheck")
+    if value is not None:
+        try:
+            if int(value) == 0:
+                return False
+        except ValueError:
+            pass
+    for line in facts.pam_common_password.splitlines():
+        if "pam_pwquality.so" in line and _PAM_PWQUALITY_DICTCHECK_RE.search(line):
+            return False
+    return True
+
+
+def _evidence_pwquality_dictcheck(facts: SystemFacts) -> str:
+    value = parse_pwquality_conf(facts.pwquality_text).get("dictcheck", "<not set>")
+    pam_line = next(
+        (line.strip() for line in facts.pam_common_password.splitlines() if "pam_pwquality.so" in line), None
+    )
+    return f"pwquality.conf: dictcheck {value}; common-password pam_pwquality.so line: {pam_line or '<none>'}"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -2105,6 +2467,50 @@ CHECKS = [
         titles=["Ensure pam_pwhistory includes use_authtok"],
         evaluate=_evaluate_pam_pwhistory_use_authtok,
         evidence=_evidence_pam_pwhistory_use_authtok,
+    ),
+    # Group P: shadow/login.defs/sudoers/pwquality (round 2). All 8
+    # assigned candidates turned out to be real controls with identical
+    # title text, threshold, and audit condition across all 6 real target
+    # documents (confirmed via Postgres) -- none dropped.
+    Check(
+        titles=["Ensure inactive password lock is configured"],
+        evaluate=_evaluate_inactive_password_lock,
+        evidence=_evidence_inactive_password_lock,
+    ),
+    Check(
+        titles=["Ensure all users last password change date is in the past"],
+        evaluate=_evaluate_last_password_change_in_past,
+        evidence=_evidence_last_password_change_in_past,
+    ),
+    Check(
+        titles=["Ensure password expiration is configured"],
+        evaluate=_evaluate_password_expiration_configured,
+        evidence=_evidence_password_expiration_configured,
+    ),
+    Check(
+        titles=["Ensure password expiration warning days is configured"],
+        evaluate=_evaluate_password_expiration_warning_configured,
+        evidence=_evidence_password_expiration_warning_configured,
+    ),
+    Check(
+        titles=["Ensure system accounts do not have a valid login shell"],
+        evaluate=_evaluate_system_accounts_no_valid_shell,
+        evidence=_evidence_system_accounts_no_valid_shell,
+    ),
+    Check(
+        titles=["Ensure accounts without a valid login shell are locked"],
+        evaluate=_evaluate_accounts_without_shell_locked,
+        evidence=_evidence_accounts_without_shell_locked,
+    ),
+    Check(
+        titles=["Ensure sudo commands use pty"],
+        evaluate=_evaluate_sudo_use_pty,
+        evidence=_evidence_sudo_use_pty,
+    ),
+    Check(
+        titles=["Ensure password dictionary check is enabled"],
+        evaluate=_evaluate_pwquality_dictcheck,
+        evidence=_evidence_pwquality_dictcheck,
     ),
 ]
 
