@@ -2322,6 +2322,112 @@ def _evidence_pwquality_dictcheck(facts: SystemFacts) -> str:
     return f"pwquality.conf: dictcheck {value}; common-password pam_pwquality.so line: {pam_line or '<none>'}"
 
 
+# Group R: kernel module availability. Real audit (confirmed via Postgres across
+# all 6 real target documents, sampled on "cramfs" and cross-checked on the rest):
+# PASS if the module's directory doesn't exist (and isn't non-empty) anywhere
+# under /lib/modules/**/kernel/<type>/<name> -- CIS's own audit explicitly treats
+# "not present on the system at all" as a passing state, no further checks
+# needed. If it IS present, PASS requires it to be both not currently loaded
+# (lsmod) AND blacklisted+install-false/true (modprobe --showconfig). module_type
+# (fs/net/drivers) is a real CIS-defined constant per module, confirmed
+# consistent across all 6 documents for each of these 12 modules -- it's not
+# detected, just hardcoded per module below.
+_KERNEL_MODULES = [
+    ("cramfs", "fs"),
+    ("dccp", "net"),
+    ("freevxfs", "fs"),
+    ("hfs", "fs"),
+    ("hfsplus", "fs"),
+    ("jffs2", "fs"),
+    ("rds", "net"),
+    ("sctp", "net"),
+    ("squashfs", "fs"),
+    ("tipc", "net"),
+    ("udf", "fs"),
+    ("usb-storage", "drivers"),
+]
+
+_KERNEL_MODULES_MODPROBE_MARKER = "---MODPROBE---"
+_KERNEL_MODULES_LSMOD_MARKER = "---LSMOD---"
+
+
+def _kernel_module_sections(text: str) -> tuple[str, str, str]:
+    """Splits facts.kernel_modules_text (one `find`/`modprobe --showconfig`/
+    `lsmod` round trip, see facts.py) into its three parts."""
+    modprobe_idx = text.find(_KERNEL_MODULES_MODPROBE_MARKER)
+    lsmod_idx = text.find(_KERNEL_MODULES_LSMOD_MARKER)
+    if modprobe_idx == -1 or lsmod_idx == -1:
+        return text, "", ""
+    return (
+        text[:modprobe_idx],
+        text[modprobe_idx + len(_KERNEL_MODULES_MODPROBE_MARKER) : lsmod_idx],
+        text[lsmod_idx + len(_KERNEL_MODULES_LSMOD_MARKER) :],
+    )
+
+
+def _kernel_module_dir_populated(find_text: str, module_type: str, module_name: str) -> bool:
+    """True if /lib/modules/**/kernel/<module_type>/<module_name> exists AND has
+    at least one file in it -- matches the real audit's own `[ -d ... ] && [ -n
+    "$(ls -A ...)" ]` pair, an empty directory is still "not available". Hyphens
+    in module_name (only usb-storage among these 12) map to nested path
+    components (drivers/usb/storage/), matching the real kernel module tree and
+    the audit script's own `${name//-/\\/}` substitution.
+    """
+    subpath = f"kernel/{module_type}/{module_name.replace('-', '/')}/"
+    return any(subpath in line for line in find_text.splitlines())
+
+
+def _kernel_module_loaded(lsmod_text: str, module_name: str) -> bool:
+    """lsmod always reports module names with underscores, never hyphens (the
+    kernel itself normalizes '-' to '_') -- same normalization the real audit
+    applies before grepping lsmod output. Matches on the first (name) column
+    only, to avoid e.g. "sctp" matching an unrelated "sctp_diag" row.
+    """
+    probe_name = module_name.replace("-", "_")
+    return any(line.split()[:1] == [probe_name] for line in lsmod_text.splitlines())
+
+
+def _kernel_module_blacklisted_and_disabled(modprobe_text: str, module_name: str) -> bool:
+    """Matches the real audit's compliant example: modprobe --showconfig output
+    must include BOTH a `blacklist <module>` line AND an `install <module>
+    /bin/false` (or /bin/true) line.
+    """
+    probe_name = re.escape(module_name.replace("-", "_"))
+    blacklisted = re.search(rf"^\s*blacklist\s+{probe_name}\b", modprobe_text, re.MULTILINE)
+    disabled = re.search(rf"^\s*install\s+{probe_name}\s+(/usr)?/bin/(true|false)\b", modprobe_text, re.MULTILINE)
+    return bool(blacklisted) and bool(disabled)
+
+
+def _evaluate_kernel_module_not_available(facts: SystemFacts, module_type: str, module_name: str) -> bool:
+    find_text, modprobe_text, lsmod_text = _kernel_module_sections(facts.kernel_modules_text)
+    if not _kernel_module_dir_populated(find_text, module_type, module_name):
+        return True
+    if _kernel_module_loaded(lsmod_text, module_name):
+        return False
+    return _kernel_module_blacklisted_and_disabled(modprobe_text, module_name)
+
+
+def _evidence_kernel_module_not_available(facts: SystemFacts, module_type: str, module_name: str) -> str:
+    find_text, modprobe_text, lsmod_text = _kernel_module_sections(facts.kernel_modules_text)
+    if not _kernel_module_dir_populated(find_text, module_type, module_name):
+        return f"{module_name}: no module directory under /lib/modules/**/kernel/{module_type} (not available)"
+    loaded = "loaded" if _kernel_module_loaded(lsmod_text, module_name) else "not loaded"
+    disabled = (
+        "blacklisted+install-disabled"
+        if _kernel_module_blacklisted_and_disabled(modprobe_text, module_name)
+        else "not blacklisted/disabled"
+    )
+    return f"{module_name}: module present under kernel/{module_type}, {loaded}, {disabled}"
+
+
+def _kernel_module_check(module_name: str, module_type: str) -> "Check":
+    return Check(
+        titles=[f"Ensure {module_name} kernel module is not available"],
+        evaluate=lambda facts, n=module_name, t=module_type: _evaluate_kernel_module_not_available(facts, t, n),
+        evidence=lambda facts, n=module_name, t=module_type: _evidence_kernel_module_not_available(facts, t, n),
+    )
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -3198,6 +3304,29 @@ CHECKS = [
         evaluate=_evaluate_pwquality_dictcheck,
         evidence=_evidence_pwquality_dictcheck,
     ),
+    # Group R: kernel module availability (cramfs, dccp, freevxfs, hfs, hfsplus,
+    # jffs2, rds, sctp, squashfs, tipc, udf, usb-storage). Title wording and
+    # audit condition are both identical across all 6 real target documents for
+    # every one of these 12 (confirmed via Postgres) -- see the group's helper
+    # functions above CHECK for the shared evaluate/evidence logic.
+    #
+    # A 13th candidate from this group, "Ensure kernel module loading unloading
+    # and modification is collected" (an auditd-rule check, not a module-
+    # availability one), was looked at and dropped: its title resolves in all 6
+    # documents (external_id drifts, e.g. 6.4.3.19 in debian_linux_11 vs
+    # 6.2.3.31 in debian_linux_13, same as every other title-matched-but-id-
+    # drifted control here), but debian_13's actual audit text is a materially
+    # different, weaker condition than the other 5 documents: debian_11,
+    # debian_12, and all 3 ubuntu documents require BOTH an auditd rule
+    # monitoring the init_module/finit_module/delete_module (and, on 4 of those
+    # 5, also create_module/query_module) syscalls AND a second rule on
+    # /usr/bin/kmod; debian_13's audit drops the syscall-monitoring rule
+    # entirely and checks only for the /usr/bin/kmod rule. One evaluate() can't
+    # represent both without being wrong for someone: checking for both rules
+    # would fail debian_13 targets that satisfy debian_13's own (real, lighter)
+    # audit; checking only the kmod rule would silently accept debian_11/12/
+    # ubuntu_* targets missing a rule their own document explicitly requires.
+    *(_kernel_module_check(name, module_type) for name, module_type in _KERNEL_MODULES),
 ]
 
 

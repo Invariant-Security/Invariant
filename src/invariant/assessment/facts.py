@@ -86,6 +86,12 @@ _TEXT_BLOCKS = [
     ("rsyslog_text", "===RSYSLOG===", "cat /etc/rsyslog.conf 2>&1"),
     ("journald_text", "===JOURNALD===", "cat /etc/systemd/journald.conf 2>&1"),
     ("audit_rules_text", "===AUDIT_RULES===", "cat /etc/audit/rules.d/*.rules /etc/audit/audit.rules 2>&1"),
+    (
+        "kernel_modules_text",
+        "===KERNEL_MODULES===",
+        "find /lib/modules -mindepth 1 2>&1; echo '---MODPROBE---'; modprobe --showconfig 2>&1; "
+        "echo '---LSMOD---'; lsmod 2>&1",
+    ),
 ]
 
 
@@ -151,6 +157,7 @@ class SystemFacts:
     rsyslog_text: str = ""
     journald_text: str = ""
     audit_rules_text: str = ""
+    kernel_modules_text: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -270,6 +277,7 @@ def _parse_collect_output(output: str) -> SystemFacts:
         rsyslog_text=text_values["rsyslog_text"],
         journald_text=text_values["journald_text"],
         audit_rules_text=text_values["audit_rules_text"],
+        kernel_modules_text=text_values["kernel_modules_text"],
     )
 
 
