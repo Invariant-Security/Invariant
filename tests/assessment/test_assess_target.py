@@ -148,6 +148,37 @@ _SYSTEMIC_GAPS = {
     # "4.2.1" instead -- excluded/re-added per-target below, same pattern
     # already used for "2.4.1.8"/"2.4.1.7".
     "4.1.1",
+    # Round 2 (Groups L-Q): 6 of the 9 newly-added checks that fail on all
+    # 6 live containers share the same external_id everywhere (confirmed
+    # via assess_target() against all 6) -- none of the 6 Dockerfiles set
+    # sshd AllowUsers/AllowGroups/DenyUsers/DenyGroups, sshd Banner,
+    # ClientAliveInterval/CountMax, install sudo, or configure password
+    # expiration (login.defs PASS_MAX_DAYS/shadow max-days), same
+    # "package/directive never hardened for it" story as the rest of this
+    # set. The other 3 (MaxAuthTries, auditd packages, AIDE) drift per
+    # document -- see _ROUND2_GAP_BY_DOCUMENT below.
+    "5.1.4",  # Ensure sshd access is configured
+    "5.1.5",  # Ensure sshd Banner is configured
+    "5.1.7",  # Ensure sshd ClientAliveInterval and ClientAliveCountMax are configured
+    "5.2.1",  # Ensure sudo is installed
+    "5.2.2",  # Ensure sudo commands use pty
+    "5.4.1.1",  # Ensure password expiration is configured
+}
+
+# Round 2: the other 3 of the 9 newly-failing checks drift per document.
+# MaxAuthTries is "5.1.16" everywhere except debian_linux_13 ("5.1.17");
+# auditd/AIDE's numbering follows the same per-document section drift
+# already established by _AUDIT_FILES_GAP_BY_DOCUMENT above (debian_11 uses
+# 6.4.x/6.1.x, ubuntu_20_04 uses 6.3.x/6.1.x, the other 4 use 6.2.x/6.3.x)
+# -- confirmed via assess_target() against all 6 live containers, not
+# guessed.
+_ROUND2_GAP_BY_DOCUMENT = {
+    "debian_linux_11": {"5.1.16", "6.1.1", "6.4.1.1"},
+    "debian_linux_12": {"5.1.16", "6.2.1.1", "6.3.1"},
+    "debian_linux_13": {"5.1.17", "6.2.1.1", "6.3.1"},
+    "ubuntu_linux_20_04": {"5.1.16", "6.1.1", "6.3.1.1"},
+    "ubuntu_linux_22_04": {"5.1.16", "6.2.1.1", "6.3.1"},
+    "ubuntu_linux_24_04": {"5.1.16", "6.2.1.1", "6.3.1"},
 }
 
 # Group I: auditd config/tooling file ownership + rules immutability. None
@@ -207,7 +238,8 @@ def test_assess_debian_baseline_fails_only_sshd_config_permissions():
         (_SYSTEMIC_GAPS - {"2.4.1.8"})
         | {"2.4.1.7", "6.2.1.1.3", "6.2.1.1.5", "6.2.1.1.6"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_11"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_11"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_11"]
+        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_11"],
     )
 
 
@@ -221,7 +253,8 @@ def test_assess_debian_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
         _SYSTEMIC_GAPS
         | {"5.1.20", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_12"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_12"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_12"]
+        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_12"],
     )
 
 
@@ -235,7 +268,8 @@ def test_assess_debian_permissions_bad_fails_only_shadow_and_sshd_config_permiss
         _SYSTEMIC_GAPS
         | {"7.1.5", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_13"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_13"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_13"]
+        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_13"],
     )
 
 
@@ -251,7 +285,8 @@ def test_assess_ubuntu_baseline_fails_only_sshd_config_permissions():
         (_SYSTEMIC_GAPS - {"4.1.1"})
         | {"4.2.1", "6.2.1.3", "6.2.2.3", "6.2.2.4"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
+        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
     )
 
 
@@ -265,7 +300,8 @@ def test_assess_ubuntu_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
         _SYSTEMIC_GAPS
         | {"5.1.20", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_22_04"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
+        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_22_04"],
     )
 
 
@@ -279,7 +315,8 @@ def test_assess_ubuntu_permissions_bad_fails_only_shadow_and_sshd_config_permiss
         _SYSTEMIC_GAPS
         | {"7.1.5", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_24_04"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
+        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_24_04"],
     )
 
 
