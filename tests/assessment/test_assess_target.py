@@ -140,6 +140,14 @@ _SYSTEMIC_GAPS = {
     "2.4.1.8",  # /etc/cron.d (debian_linux_11 uses 2.4.1.7 instead, see below)
     "5.2.3",  # Ensure sudo log file exists
     "1.4.2",  # Ensure access to bootloader config is configured (Group J)
+    # Group K: "Ensure ufw is installed" -- ufw isn't installed on any of
+    # the 6 live containers (same "package never installed, never hardened
+    # for it" story as the rest of this set), confirmed via
+    # assess_target() against all 6. Id is "4.1.1" on 5 of 6 real target
+    # documents; ubuntu_linux_20_04 (the ubuntu-baseline target) uses
+    # "4.2.1" instead -- excluded/re-added per-target below, same pattern
+    # already used for "2.4.1.8"/"2.4.1.7".
+    "4.1.1",
 }
 
 # Group I: auditd config/tooling file ownership + rules immutability. None
@@ -235,10 +243,13 @@ def test_assess_ubuntu_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-baseline")
 
     assert len(findings) == len(CHECKS)
+    # ubuntu_linux_20_04 (this target's document) uses "4.2.1" for "Ensure
+    # ufw is installed", not the "4.1.1" every other real target document
+    # uses -- see _SYSTEMIC_GAPS's Group K comment above.
     _assert_fails_only(
         findings,
-        _SYSTEMIC_GAPS
-        | {"6.2.1.3", "6.2.2.3", "6.2.2.4"}
+        (_SYSTEMIC_GAPS - {"4.1.1"})
+        | {"4.2.1", "6.2.1.3", "6.2.2.3", "6.2.2.4"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
     )
