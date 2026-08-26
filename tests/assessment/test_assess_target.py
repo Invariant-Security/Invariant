@@ -163,6 +163,18 @@ _SYSTEMIC_GAPS = {
     "5.2.1",  # Ensure sudo is installed
     "5.2.2",  # Ensure sudo commands use pty
     "5.4.1.1",  # Ensure password expiration is configured
+    # Round 3 (kernel modules, faillock, su-restriction, root-umask, full-fs
+    # scans): only 2 of the 20 newly-added checks fail on the 6 live
+    # containers, both with the same external_id on all 6 (confirmed via
+    # assess_target()) -- none of the 6 Dockerfiles configure
+    # /etc/pam.d/su's pam_wheel.so line, or set even_deny_root/
+    # root_unlock_time in faillock.conf. Everything else this round
+    # (12 kernel-module checks -- /lib/modules never exists in any of the 6
+    # containers, so they PASS vacuously per CIS's own documented passing
+    # state; 2 more faillock checks; root umask; world-writable/unowned/
+    # root-PATH) already passes with zero further changes.
+    "5.2.7",  # Ensure access to the su command is restricted
+    "5.3.3.1.3",  # Ensure password failed attempts lockout includes root account
 }
 
 # Round 2: the other 3 of the 9 newly-failing checks drift per document.
