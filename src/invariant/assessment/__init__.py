@@ -914,6 +914,126 @@ def _evidence_prelink_not_installed(facts: SystemFacts) -> str:
     return f"installed_packages: prelink {'present' if present else 'absent'}"
 
 
+# Group M: unused network service packages, batch A (round 2). Same
+# "package must NOT be installed" shape as the client-side checks above,
+# just server-side daemons -- confirmed via Postgres audit text across all
+# 6 target documents (debian_linux_11/12/13, ubuntu_linux_20_04/22_04/24_04)
+# that each title's audit opens with a `dpkg-query -s <pkg>` (or, for the
+# renamed dhcp package, a `dpkg-query -l | grep 'kea'` substring match
+# against the real "kea" meta-package) check against the exact package
+# named below -- an "enabled/active" fallback branch follows in the real
+# audit text ("- OR - - IF - the package is required as a dependency:
+# ...systemctl is-enabled/is-active...") but facts.py doesn't collect
+# systemd unit state, so (same as every other package-absent check in this
+# file) only the package-installed condition is evaluated here.
+def _evaluate_avahi_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "avahi-daemon")
+
+
+def _evidence_avahi_not_in_use(facts: SystemFacts) -> str:
+    present = "avahi-daemon" in facts.installed_packages
+    return f"installed_packages: avahi-daemon {'present' if present else 'absent'}"
+
+
+def _evaluate_bluetooth_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "bluez")
+
+
+def _evidence_bluetooth_not_in_use(facts: SystemFacts) -> str:
+    present = "bluez" in facts.installed_packages
+    return f"installed_packages: bluez {'present' if present else 'absent'}"
+
+
+# isc-dhcp-server (debian_11, ubuntu_20_04, ubuntu_22_04) was replaced by
+# kea (debian_12, debian_13, ubuntu_24_04) -- confirmed via Postgres, same
+# split as telnet/inetutils-telnet above. Both must be absent to PASS.
+def _evaluate_dhcp_server_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "isc-dhcp-server", "kea")
+
+
+def _evidence_dhcp_server_not_in_use(facts: SystemFacts) -> str:
+    present = [p for p in ("isc-dhcp-server", "kea") if p in facts.installed_packages]
+    return f"installed_packages: isc-dhcp-server/kea {'present: ' + ','.join(present) if present else 'absent'}"
+
+
+def _evaluate_dns_server_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "bind9")
+
+
+def _evidence_dns_server_not_in_use(facts: SystemFacts) -> str:
+    present = "bind9" in facts.installed_packages
+    return f"installed_packages: bind9 {'present' if present else 'absent'}"
+
+
+def _evaluate_dnsmasq_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "dnsmasq")
+
+
+def _evidence_dnsmasq_not_in_use(facts: SystemFacts) -> str:
+    present = "dnsmasq" in facts.installed_packages
+    return f"installed_packages: dnsmasq {'present' if present else 'absent'}"
+
+
+# ubuntu_linux_22_04's audit text for this control has an internal
+# copy/paste glitch: its opening line still says "verify vsftpd is not
+# installed", but the dpkg-query command pasted under it greps for
+# "ftp"/"tnftp" -- the FTP *client* packages, i.e. the same audit command
+# already used for the unrelated "Ensure ftp client is not installed"
+# control (_evaluate_ftp_client_not_installed above). Everything else in
+# that same document's audit block (the "- OR -" is-enabled/is-active
+# fallback, the closing notes) keeps referring to "vsftpd service", and
+# all other 5 documents check vsftpd cleanly -- so this is treated as a
+# PDF extraction artifact in that one document, not a genuinely different
+# condition, and vsftpd is checked uniformly across all 6.
+def _evaluate_ftp_server_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "vsftpd")
+
+
+def _evidence_ftp_server_not_in_use(facts: SystemFacts) -> str:
+    present = "vsftpd" in facts.installed_packages
+    return f"installed_packages: vsftpd {'present' if present else 'absent'}"
+
+
+def _evaluate_ldap_server_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "slapd")
+
+
+def _evidence_ldap_server_not_in_use(facts: SystemFacts) -> str:
+    present = "slapd" in facts.installed_packages
+    return f"installed_packages: slapd {'present' if present else 'absent'}"
+
+
+# Two distinct real packages (IMAP and POP3 servers), not name-drift
+# aliases like isc-dhcp-server/kea above -- the real audit checks each
+# with its own separate dpkg-query line, and either one present is a
+# finding, so both must be absent to PASS.
+def _evaluate_message_access_server_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "dovecot-imapd", "dovecot-pop3d")
+
+
+def _evidence_message_access_server_not_in_use(facts: SystemFacts) -> str:
+    present = [p for p in ("dovecot-imapd", "dovecot-pop3d") if p in facts.installed_packages]
+    return f"installed_packages: dovecot-imapd/dovecot-pop3d {'present: ' + ','.join(present) if present else 'absent'}"
+
+
+def _evaluate_nfs_server_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "nfs-kernel-server")
+
+
+def _evidence_nfs_server_not_in_use(facts: SystemFacts) -> str:
+    present = "nfs-kernel-server" in facts.installed_packages
+    return f"installed_packages: nfs-kernel-server {'present' if present else 'absent'}"
+
+
+def _evaluate_nis_server_not_in_use(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "ypserv")
+
+
+def _evidence_nis_server_not_in_use(facts: SystemFacts) -> str:
+    present = "ypserv" in facts.installed_packages
+    return f"installed_packages: ypserv {'present' if present else 'absent'}"
+
+
 # Group I: auditd config/tooling file ownership + rules immutability. Real
 # audit commands (e.g. debian_linux_11 6.4.4.6/6.4.4.7/6.4.4.9/6.4.4.10)
 # check a whole file set -- `find /etc/audit/ -type f ( *.conf -o *.rules )
@@ -2105,6 +2225,57 @@ CHECKS = [
         titles=["Ensure pam_pwhistory includes use_authtok"],
         evaluate=_evaluate_pam_pwhistory_use_authtok,
         evidence=_evidence_pam_pwhistory_use_authtok,
+    ),
+    # Group M: unused network service packages, batch A (round 2).
+    Check(
+        titles=["Ensure avahi daemon services are not in use"],
+        evaluate=_evaluate_avahi_not_in_use,
+        evidence=_evidence_avahi_not_in_use,
+    ),
+    Check(
+        titles=["Ensure bluetooth services are not in use"],
+        evaluate=_evaluate_bluetooth_not_in_use,
+        evidence=_evidence_bluetooth_not_in_use,
+    ),
+    Check(
+        titles=["Ensure dhcp server services are not in use"],
+        evaluate=_evaluate_dhcp_server_not_in_use,
+        evidence=_evidence_dhcp_server_not_in_use,
+    ),
+    Check(
+        titles=["Ensure dns server services are not in use"],
+        evaluate=_evaluate_dns_server_not_in_use,
+        evidence=_evidence_dns_server_not_in_use,
+    ),
+    Check(
+        titles=["Ensure dnsmasq services are not in use"],
+        evaluate=_evaluate_dnsmasq_not_in_use,
+        evidence=_evidence_dnsmasq_not_in_use,
+    ),
+    Check(
+        titles=["Ensure ftp server services are not in use"],
+        evaluate=_evaluate_ftp_server_not_in_use,
+        evidence=_evidence_ftp_server_not_in_use,
+    ),
+    Check(
+        titles=["Ensure ldap server services are not in use"],
+        evaluate=_evaluate_ldap_server_not_in_use,
+        evidence=_evidence_ldap_server_not_in_use,
+    ),
+    Check(
+        titles=["Ensure message access server services are not in use"],
+        evaluate=_evaluate_message_access_server_not_in_use,
+        evidence=_evidence_message_access_server_not_in_use,
+    ),
+    Check(
+        titles=["Ensure network file system services are not in use"],
+        evaluate=_evaluate_nfs_server_not_in_use,
+        evidence=_evidence_nfs_server_not_in_use,
+    ),
+    Check(
+        titles=["Ensure nis server services are not in use"],
+        evaluate=_evaluate_nis_server_not_in_use,
+        evidence=_evidence_nis_server_not_in_use,
     ),
 ]
 
