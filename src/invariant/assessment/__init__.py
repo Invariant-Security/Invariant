@@ -1473,6 +1473,135 @@ def _evidence_pam_pwhistory_use_authtok(facts: SystemFacts) -> str:
     )
 
 
+# Group N: unused network service packages batch B + required packages
+# (round 2). All 11 titles below confirmed via Postgres to resolve in all 6
+# target documents, audit text read in full for each (not just a snippet).
+#
+# Part A (8): same "package must NOT be installed" shape as Group I's
+# _packages_absent-based checks above -- the real audit's dpkg-query check
+# is unconditional, with an "- OR - IF the package is required as a
+# dependency, check its systemd unit isn't enabled/active" fallback branch
+# that every existing _packages_absent check in this file already omits
+# (SystemFacts has no systemd unit-state collection), so this follows the
+# established precedent rather than inventing a new shape.
+#
+# Part B (3): opposite direction, same installed_packages field.
+#   - "Ensure sudo is installed": confirmed OR across all 6 docs -- each
+#     lists sudo, then "- OR -", then sudo-ldap. (debian_linux_13 also
+#     lists a further libsss-sudo+sssd alternative; not needed since
+#     sudo/sudo-ldap alone already covers the common case identically to
+#     the other 5 docs.)
+#   - "Ensure auditd packages are installed": confirmed AND across all 6
+#     docs -- unlike the sudo control, there is no "- OR -" between the
+#     auditd step and the audispd-plugins step; both are stated as
+#     required verifications with no alternative offered.
+#   - "Ensure AIDE is installed": same AND shape as auditd, confirmed
+#     across all 6 docs -- aide and aide-common are both required
+#     verification steps with no "- OR -" between them.
+def _evaluate_cups_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "cups")
+
+
+def _evidence_cups_not_installed(facts: SystemFacts) -> str:
+    present = "cups" in facts.installed_packages
+    return f"installed_packages: cups {'present' if present else 'absent'}"
+
+
+def _evaluate_rpcbind_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "rpcbind")
+
+
+def _evidence_rpcbind_not_installed(facts: SystemFacts) -> str:
+    present = "rpcbind" in facts.installed_packages
+    return f"installed_packages: rpcbind {'present' if present else 'absent'}"
+
+
+def _evaluate_samba_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "samba")
+
+
+def _evidence_samba_not_installed(facts: SystemFacts) -> str:
+    present = "samba" in facts.installed_packages
+    return f"installed_packages: samba {'present' if present else 'absent'}"
+
+
+def _evaluate_snmp_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "snmpd")
+
+
+def _evidence_snmp_not_installed(facts: SystemFacts) -> str:
+    present = "snmpd" in facts.installed_packages
+    return f"installed_packages: snmpd {'present' if present else 'absent'}"
+
+
+def _evaluate_tftp_server_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "tftpd-hpa")
+
+
+def _evidence_tftp_server_not_installed(facts: SystemFacts) -> str:
+    present = "tftpd-hpa" in facts.installed_packages
+    return f"installed_packages: tftpd-hpa {'present' if present else 'absent'}"
+
+
+def _evaluate_web_proxy_not_installed(facts: SystemFacts) -> bool:
+    """ubuntu_linux_20_04's audit additionally names squid-openssl; the
+    other 5 docs check squid alone. Requiring both absent is a safe
+    superset (same reasoning as _packages_absent's own docstring, and the
+    same pattern already used for telnet/inetutils-telnet and ftp/tnftp).
+    """
+    return _packages_absent(facts, "squid", "squid-openssl")
+
+
+def _evidence_web_proxy_not_installed(facts: SystemFacts) -> str:
+    present = [p for p in ("squid", "squid-openssl") if p in facts.installed_packages]
+    return f"installed_packages: squid/squid-openssl {'present: ' + ','.join(present) if present else 'absent'}"
+
+
+def _evaluate_web_server_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "apache2", "nginx")
+
+
+def _evidence_web_server_not_installed(facts: SystemFacts) -> str:
+    present = [p for p in ("apache2", "nginx") if p in facts.installed_packages]
+    return f"installed_packages: apache2/nginx {'present: ' + ','.join(present) if present else 'absent'}"
+
+
+def _evaluate_autofs_not_installed(facts: SystemFacts) -> bool:
+    return _packages_absent(facts, "autofs")
+
+
+def _evidence_autofs_not_installed(facts: SystemFacts) -> str:
+    present = "autofs" in facts.installed_packages
+    return f"installed_packages: autofs {'present' if present else 'absent'}"
+
+
+def _evaluate_sudo_installed(facts: SystemFacts) -> bool:
+    return "sudo" in facts.installed_packages or "sudo-ldap" in facts.installed_packages
+
+
+def _evidence_sudo_installed(facts: SystemFacts) -> str:
+    present = [p for p in ("sudo", "sudo-ldap") if p in facts.installed_packages]
+    return f"installed_packages: sudo/sudo-ldap {'present: ' + ','.join(present) if present else 'absent'}"
+
+
+def _evaluate_auditd_packages_installed(facts: SystemFacts) -> bool:
+    return "auditd" in facts.installed_packages and "audispd-plugins" in facts.installed_packages
+
+
+def _evidence_auditd_packages_installed(facts: SystemFacts) -> str:
+    missing = [p for p in ("auditd", "audispd-plugins") if p not in facts.installed_packages]
+    return f"installed_packages: auditd/audispd-plugins {'both present' if not missing else 'missing: ' + ','.join(missing)}"
+
+
+def _evaluate_aide_installed(facts: SystemFacts) -> bool:
+    return "aide" in facts.installed_packages and "aide-common" in facts.installed_packages
+
+
+def _evidence_aide_installed(facts: SystemFacts) -> str:
+    missing = [p for p in ("aide", "aide-common") if p not in facts.installed_packages]
+    return f"installed_packages: aide/aide-common {'both present' if not missing else 'missing: ' + ','.join(missing)}"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -2105,6 +2234,62 @@ CHECKS = [
         titles=["Ensure pam_pwhistory includes use_authtok"],
         evaluate=_evaluate_pam_pwhistory_use_authtok,
         evidence=_evidence_pam_pwhistory_use_authtok,
+    ),
+    # Group N: unused network service packages batch B + required packages (round 2)
+    Check(
+        titles=["Ensure print server services are not in use"],
+        evaluate=_evaluate_cups_not_installed,
+        evidence=_evidence_cups_not_installed,
+    ),
+    Check(
+        titles=["Ensure rpcbind services are not in use"],
+        evaluate=_evaluate_rpcbind_not_installed,
+        evidence=_evidence_rpcbind_not_installed,
+    ),
+    Check(
+        titles=["Ensure samba file server services are not in use"],
+        evaluate=_evaluate_samba_not_installed,
+        evidence=_evidence_samba_not_installed,
+    ),
+    Check(
+        titles=["Ensure snmp services are not in use"],
+        evaluate=_evaluate_snmp_not_installed,
+        evidence=_evidence_snmp_not_installed,
+    ),
+    Check(
+        titles=["Ensure tftp server services are not in use"],
+        evaluate=_evaluate_tftp_server_not_installed,
+        evidence=_evidence_tftp_server_not_installed,
+    ),
+    Check(
+        titles=["Ensure web proxy server services are not in use"],
+        evaluate=_evaluate_web_proxy_not_installed,
+        evidence=_evidence_web_proxy_not_installed,
+    ),
+    Check(
+        titles=["Ensure web server services are not in use"],
+        evaluate=_evaluate_web_server_not_installed,
+        evidence=_evidence_web_server_not_installed,
+    ),
+    Check(
+        titles=["Ensure autofs services are not in use"],
+        evaluate=_evaluate_autofs_not_installed,
+        evidence=_evidence_autofs_not_installed,
+    ),
+    Check(
+        titles=["Ensure sudo is installed"],
+        evaluate=_evaluate_sudo_installed,
+        evidence=_evidence_sudo_installed,
+    ),
+    Check(
+        titles=["Ensure auditd packages are installed"],
+        evaluate=_evaluate_auditd_packages_installed,
+        evidence=_evidence_auditd_packages_installed,
+    ),
+    Check(
+        titles=["Ensure AIDE is installed"],
+        evaluate=_evaluate_aide_installed,
+        evidence=_evidence_aide_installed,
     ),
 ]
 
