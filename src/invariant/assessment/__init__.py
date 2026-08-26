@@ -914,6 +914,20 @@ def _evidence_prelink_not_installed(facts: SystemFacts) -> str:
     return f"installed_packages: prelink {'present' if present else 'absent'}"
 
 
+# Group K: package presence -- the opposite direction of the "not installed"
+# checks above, same installed_packages field. "Ensure ufw is installed" is
+# the only one of 3 candidates that resolves for all 6 real target documents
+# (confirmed via Postgres); the other two were dropped -- see the comment
+# above the Group K CHECKS entries near the end of this list.
+def _evaluate_ufw_installed(facts: SystemFacts) -> bool:
+    return "ufw" in facts.installed_packages
+
+
+def _evidence_ufw_installed(facts: SystemFacts) -> str:
+    present = "ufw" in facts.installed_packages
+    return f"installed_packages: ufw {'present' if present else 'absent'}"
+
+
 # Group I: auditd config/tooling file ownership + rules immutability. Real
 # audit commands (e.g. debian_linux_11 6.4.4.6/6.4.4.7/6.4.4.9/6.4.4.10)
 # check a whole file set -- `find /etc/audit/ -type f ( *.conf -o *.rules )
@@ -2105,6 +2119,27 @@ CHECKS = [
         titles=["Ensure pam_pwhistory includes use_authtok"],
         evaluate=_evaluate_pam_pwhistory_use_authtok,
         evidence=_evidence_pam_pwhistory_use_authtok,
+    ),
+    # Group K: package presence (installed_packages must contain the
+    # package, the inverse of the "not installed" checks in the block
+    # above). Two assigned candidates were dropped: "Ensure rsyslog is
+    # installed" only has a control on debian_linux_12/13 and
+    # ubuntu_linux_20_04/22_04/24_04 (confirmed via Postgres) -- no
+    # rsyslog-titled control exists on debian_linux_11 at all, consistent
+    # with the Group J comment above ("debian_linux_11 ... only covers
+    # journald for logging"), and invariant-debian-baseline resolves to
+    # exactly that document, so assess_target() would raise LookupError
+    # against it. "Ensure rsyslog-gnutls is installed" is narrower still --
+    # only debian_linux_12, debian_linux_13, ubuntu_linux_24_04 -- missing
+    # debian_linux_11 *and* ubuntu_linux_20_04/22_04, all three real target
+    # documents. "Ensure ufw is installed" is the one candidate confirmed
+    # present, with matching unconditional dpkg-query audit text, on all 6
+    # real target documents (debian_linux_11/12/13,
+    # ubuntu_linux_20_04/22_04/24_04).
+    Check(
+        titles=["Ensure ufw is installed"],
+        evaluate=_evaluate_ufw_installed,
+        evidence=_evidence_ufw_installed,
     ),
 ]
 
