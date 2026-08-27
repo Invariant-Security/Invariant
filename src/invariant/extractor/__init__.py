@@ -72,6 +72,14 @@ class ExtractedRecommendation:
     rationale: str
     audit: str
     remediation: str
+    # 1-based PDF page numbers this recommendation's header-through-body text
+    # was found on (PRD sec. 47, the reproducibility invariant: every
+    # extracted field must be traceable to an exact page range of the raw
+    # artifact identified by its SHA-256). 0 means "not set" -- only real
+    # extraction via extract_all_recommendations() fills these in; hand-built
+    # ExtractedRecommendation instances in tests don't need to care.
+    source_page_start: int = 0
+    source_page_end: int = 0
 
 
 class ExtractionError(Exception):
@@ -172,8 +180,15 @@ def extract_all_recommendations(pdf_path: Path) -> list[ExtractedRecommendation]
     contents and in a checklist appendix at the end of the document --
     neither is followed by "Profile Applicability:", which is what this
     function uses to tell a real header apart from those two lookalikes.
+
+    Page provenance (codexplan.md Fase 3): a recommendation whose body is
+    split across pages is still reconstructed as one recommendation (header
+    detection and section splitting both just walk the flat `lines` list,
+    same as before page tracking existed) -- what's new is that
+    source_page_start/source_page_end record the real page range that
+    reconstruction pulled from, via `line_pages` (parallel to `lines`).
     """
-    lines = _pdf_lines(pdf_path)
+    lines, line_pages = _pdf_lines(pdf_path)
     headers = _find_headers(lines)
 
     recommendations = []
@@ -181,6 +196,7 @@ def extract_all_recommendations(pdf_path: Path) -> list[ExtractedRecommendation]
         body_start = header["body_start"]
         body_end = headers[i + 1]["line_start"] if i + 1 < len(headers) else len(lines)
         sections = _split_sections(lines[body_start:body_end])
+        end_line_index = (body_end - 1) if body_end > body_start else header["line_start"]
 
         recommendations.append(
             ExtractedRecommendation(
@@ -192,6 +208,8 @@ def extract_all_recommendations(pdf_path: Path) -> list[ExtractedRecommendation]
                 rationale=sections.get("Rationale", "").strip(),
                 audit=sections.get("Audit", "").strip(),
                 remediation=sections.get("Remediation", "").strip(),
+                source_page_start=line_pages[header["line_start"]],
+                source_page_end=line_pages[end_line_index],
             )
         )
     return recommendations
@@ -242,10 +260,20 @@ def _next_non_blank(lines: list[str], start: int) -> int | None:
     return None
 
 
-def _pdf_lines(pdf_path: Path) -> list[str]:
+def _pdf_lines(pdf_path: Path) -> tuple[list[str], list[int]]:
+    """Returns (lines, line_pages): line_pages[i] is the 1-based PDF page
+    lines[i] came from. Reads page by page (not one joined blob) specifically
+    so that per-line page of origin is never lost -- see Fase 3 provenance
+    note on extract_all_recommendations().
+    """
     reader = PdfReader(pdf_path)
-    full_text = "\n".join(page.extract_text() for page in reader.pages)
-    return full_text.splitlines()
+    lines: list[str] = []
+    line_pages: list[int] = []
+    for page_number, page in enumerate(reader.pages, start=1):
+        page_lines = page.extract_text().splitlines()
+        lines.extend(page_lines)
+        line_pages.extend([page_number] * len(page_lines))
+    return lines, line_pages
 
 
 def _split_sections(lines: list[str]) -> dict[str, str]:

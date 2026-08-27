@@ -122,7 +122,9 @@ def _independent_evidence(slug: str, version: str, raw_text: str, extracted_coun
     return "heuristic: 'Description:' label occurrences in raw text", description_label_count
 
 
-def _recommendations_from_headers(lines: list[str], headers: list[dict]) -> list[ExtractedRecommendation]:
+def _recommendations_from_headers(
+    lines: list[str], line_pages: list[int], headers: list[dict]
+) -> list[ExtractedRecommendation]:
     """Mirrors extract_all_recommendations()'s assembly loop exactly (see
     invariant/extractor/__init__.py), but takes already-loaded `lines` so
     the caller controls how many times the PDF gets text-extracted.
@@ -132,6 +134,7 @@ def _recommendations_from_headers(lines: list[str], headers: list[dict]) -> list
         body_start = header["body_start"]
         body_end = headers[i + 1]["line_start"] if i + 1 < len(headers) else len(lines)
         sections = _split_sections(lines[body_start:body_end])
+        end_line_index = (body_end - 1) if body_end > body_start else header["line_start"]
         recommendations.append(
             ExtractedRecommendation(
                 external_id=header["id"],
@@ -142,6 +145,8 @@ def _recommendations_from_headers(lines: list[str], headers: list[dict]) -> list
                 rationale=sections.get("Rationale", "").strip(),
                 audit=sections.get("Audit", "").strip(),
                 remediation=sections.get("Remediation", "").strip(),
+                source_page_start=line_pages[header["line_start"]],
+                source_page_end=line_pages[end_line_index],
             )
         )
     return recommendations
@@ -167,10 +172,10 @@ def characterize(pdf_path: Path) -> DocumentCharacterization:
     rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     start = time.monotonic()
     try:
-        lines = _pdf_lines(pdf_path)  # the one and only full-text pass
+        lines, line_pages = _pdf_lines(pdf_path)  # the one and only full-text pass
         raw_text = "\n".join(lines)
         headers = _find_headers(lines)
-        recommendations = _recommendations_from_headers(lines, headers)
+        recommendations = _recommendations_from_headers(lines, line_pages, headers)
     except Exception as exc:  # noqa: BLE001 -- deliberately broad: report, don't crash the matrix run
         error = f"{type(exc).__name__}: {exc}"
     elapsed = time.monotonic() - start

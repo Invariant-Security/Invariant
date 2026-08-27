@@ -153,6 +153,8 @@ def test_extract_wires_extractor_output_into_storage(monkeypatch, capsys):
         "rationale": "rationale",
         "audit": "audit",
         "remediation": "remediation",
+        "source_page_start": 0,
+        "source_page_end": 0,
     }
     assert calls["upserted_items"][1]["external_id"] == "6.1.4"
     assert calls["committed"] is True
