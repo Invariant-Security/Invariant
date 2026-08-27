@@ -2788,6 +2788,309 @@ def _evidence_root_path_integrity(facts: SystemFacts) -> str:
     return f"root PATH: {raw_path or '<empty>'}"
 
 
+# Group: audit rule collection (round 4). Each control below checks for one
+# specific auditd RULE (not a config file directive) via
+# facts.audit_rules_text (facts.py: `cat /etc/audit/rules.d/*.rules
+# /etc/audit/audit.rules`). CIS's audit documents show two syntaxes for the
+# *same* real control depending on document age: an old `-w <path> -p wa -k
+# <key>` watch-mode rule, or a newer `-a always,exit -F path=<path>`/`-F
+# dir=<path>` `-F perm=wa` syscall/path-mode rule -- debian_linux_13's own
+# audit text says outright "The deprecated -w format ... is in a 'passing'
+# state", i.e. both are CIS-confirmed-equivalent ways to write the identical
+# monitoring rule, not two different conditions. Every evaluate() below that
+# watches a path therefore accepts either form. Confirmed via Postgres
+# across all 6 real target documents (debian_linux_11/12/13, ubuntu_linux_
+# 20_04/22_04/24_04) that every title below resolves identically (no title-
+# wording drift, 6/6 rows for each) and that the underlying condition really
+# is the same single control in every document -- not a case of an old
+# document silently bundling two different real controls into one (the
+# ip-forwarding-style trap checks.md warns about).
+#
+# "Ensure use of privileged commands are collected" was investigated and
+# dropped: its real audit enumerates every SUID/SGID binary under any
+# nodev-mountable partition (`findmnt ... | find -perm /6000`) on the live
+# target and expects a per-path audit rule for each one found -- which
+# binaries exist (and their exact paths) is container-dependent, so there is
+# no deterministic "expected rule set" to derive the same way a real target
+# audit would; faithfully implementing it risks exactly the invented
+# pass/fail condition checks.md's "no invented failure conditions" rule
+# warns against, so it's dropped rather than approximated.
+
+
+def _line_matches_all(line: str, patterns: tuple[str, ...]) -> bool:
+    return all(re.search(p, line) for p in patterns)
+
+
+def _any_audit_line_matches(facts: SystemFacts, *patterns: str) -> bool:
+    """True if some single line of facts.audit_rules_text matches every
+    regex in `patterns` -- mirrors the real CIS audit awk/grep scripts,
+    which likewise test a whole set of substrings against one rule line
+    (order-independent), not a multi-line sequence.
+    """
+    return any(_line_matches_all(line, patterns) for line in facts.audit_rules_text.splitlines())
+
+
+def _path_write_monitored(facts: SystemFacts, path: str) -> bool:
+    """True if `path` has a write/attribute-change audit rule watching it,
+    in either the old `-w` or new `-F path=`/`-F dir=` form (see the group
+    comment above -- CIS examples: `-w /etc/apparmor.d/ -p wa -k
+    MAC-policy` vs `-a always,exit -F dir=/etc/apparmor.d -F perm=wa -k
+    MAC-policy`). The `(?=\\s|$)` lookahead after the path (rather than a
+    `\\b` boundary) stops "/etc/apparmor" from matching inside an
+    "/etc/apparmor.d" line -- a `\\b` boundary alone would still fire there
+    (word char 'r' -> non-word '.'), which would wrongly treat the two
+    distinct paths as the same rule.
+    """
+    escaped = re.escape(path.rstrip("/"))
+    old = rf"-w\s+{escaped}/?(?=\s)"
+    new = rf"-F\s*(?:path|dir)\s*=\s*{escaped}/?(?=\s|$)"
+    return _any_audit_line_matches(facts, old, r"-p\s*wa") or _any_audit_line_matches(
+        facts, new, r"-F\s*perm\s*=\s*wa"
+    )
+
+
+def _all_paths_watched(facts: SystemFacts, paths: tuple[str, ...]) -> bool:
+    return all(_path_write_monitored(facts, p) for p in paths)
+
+
+def _evidence_paths_watched(paths: tuple[str, ...]) -> Callable[[SystemFacts], str]:
+    def _evidence(facts: SystemFacts) -> str:
+        parts = [f"{p}: {'watched' if _path_write_monitored(facts, p) else 'NOT watched'}" for p in paths]
+        return "audit rules: " + " | ".join(parts)
+
+    return _evidence
+
+
+_USER_EMULATION_PATTERNS = (
+    r"-a\s+always,exit",
+    r"-F\s*arch=b(32|64)",
+    r"-S\s*execve",
+    r"auid!=(unset|-1|4294967295)",
+    r"(-C\s*euid!=uid|-C\s*uid!=euid)",
+    r"(-k\s+\S+|\bkey=\S+)",
+)
+
+
+def _evaluate_user_emulation_logged(facts: SystemFacts) -> bool:
+    """Real audit (identical condition across all 6 real target documents,
+    e.g. debian_linux_12's "Ensure actions as another user are always
+    logged"): `auditctl -l | grep execve` and `grep -Ps -- execve
+    /etc/audit/rules.d/*.rules` must each show a rule shaped like `-a
+    always,exit -F arch=b64 -C euid!=uid -F auid!=unset -S execve -k
+    user_emulation` (both an arch=b32 and an arch=b64 variant are expected
+    on a real target; a single matching line already proves the rule type
+    is present).
+    """
+    return _any_audit_line_matches(facts, *_USER_EMULATION_PATTERNS)
+
+
+def _evidence_user_emulation_logged(facts: SystemFacts) -> str:
+    ok = _evaluate_user_emulation_logged(facts)
+    return f"audit rules: execve rule (arch, -C euid!=uid, auid!=unset, -k) {'found' if ok else 'NOT found'}"
+
+
+_TIME_CHANGE_SYSCALL_PATTERNS = (
+    r"-a\s+always,exit",
+    r"-S\s*\S*(adjtimex|settimeofday|clock_settime)",
+)
+
+
+def _evaluate_time_change_logged(facts: SystemFacts) -> bool:
+    """Real audit (identical condition across all 6 real target documents,
+    e.g. debian_linux_12's "Ensure events that modify date and time
+    information are collected"): `auditctl -l | grep -Ps --
+    '(adjtimex|settimeofday|clock_settime)'` must show a syscall rule (`-a
+    always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change`, plus
+    a clock_settime rule) *and* a rule watching /etc/localtime for writes
+    (`-w /etc/localtime -p wa -k time-change`, or debian_linux_13's `-a
+    always,exit -F path=/etc/localtime -F perm=wa`).
+    """
+    return _any_audit_line_matches(facts, *_TIME_CHANGE_SYSCALL_PATTERNS) and _path_write_monitored(
+        facts, "/etc/localtime"
+    )
+
+
+def _evidence_time_change_logged(facts: SystemFacts) -> str:
+    syscall_ok = _any_audit_line_matches(facts, *_TIME_CHANGE_SYSCALL_PATTERNS)
+    path_ok = _path_write_monitored(facts, "/etc/localtime")
+    return (
+        f"audit rules: adjtimex/settimeofday/clock_settime rule {'found' if syscall_ok else 'NOT found'}; "
+        f"/etc/localtime write-watch {'found' if path_ok else 'NOT found'}"
+    )
+
+
+_SUDO_LOGFILE_VALUE_RE = re.compile(r"(?i)\blogfile\s*=\s*(\"[^\"]+\"|'[^']+'|\S+)")
+
+
+def _sudo_log_file_path(facts: SystemFacts) -> str | None:
+    """Resolves sudo's configured log path from an active `Defaults ...
+    logfile=...` line in /etc/sudoers, the same source
+    _evaluate_sudo_log_file_exists already checks for -- reused here
+    because this control's own real audit derives its watched path from
+    that exact directive (`grep -r logfile /etc/sudoers* | sed -e
+    's/.*logfile=//;...'`).
+    """
+    for line in _sudoers_active_lines(facts.sudoers_text):
+        if not _SUDO_LOGFILE_RE.match(line):
+            continue
+        match = _SUDO_LOGFILE_VALUE_RE.search(line)
+        if not match:
+            continue
+        value = match.group(1).strip("\"'").rstrip(",").strip()
+        if value:
+            return value
+    return None
+
+
+def _evaluate_sudo_log_file_logged(facts: SystemFacts) -> bool:
+    """Real audit (identical condition across all 6 real target documents,
+    e.g. debian_linux_12's "Ensure events that modify the sudo log file are
+    collected" -- every document's own text notes this "requires that the
+    sudo logfile is configured", the known "Ensure sudo log file exists"
+    gap): resolves sudo's configured log path, then checks for a rule
+    watching it (`-w /var/log/sudo.log -p wa -k sudo_log_file`, or
+    debian_linux_13's `-a always,exit -F path=/var/log/sudo.log -F
+    perm=wa`). Fails closed if no `Defaults ... logfile=...` line is active
+    in sudoers -- same posture as _evaluate_sudo_log_file_exists, since
+    there is then no path to watch, and this container's default sudoers
+    never sets one.
+    """
+    path = _sudo_log_file_path(facts)
+    return bool(path) and _path_write_monitored(facts, path)
+
+
+def _evidence_sudo_log_file_logged(facts: SystemFacts) -> str:
+    path = _sudo_log_file_path(facts)
+    if not path:
+        return "sudoers: no Defaults logfile= line found -- no path to watch"
+    watched = _path_write_monitored(facts, path)
+    return f"sudo log file {path}: write-watch {'found' if watched else 'NOT found'}"
+
+
+_MAC_POLICY_PATHS = ("/etc/apparmor", "/etc/apparmor.d")
+
+
+def _evaluate_mac_policy_logged(facts: SystemFacts) -> bool:
+    """Real audit (identical condition across all 6 real target documents,
+    e.g. debian_linux_12's "Ensure events that modify the system's
+    Mandatory Access Controls are collected"): `auditctl -l | grep -Ps --
+    apparmor` must show both `-w /etc/apparmor/ -p wa -k MAC-policy` and
+    `-w /etc/apparmor.d/ -p wa -k MAC-policy` (or debian_linux_13's `-a
+    always,exit -F path=/etc/apparmor -F perm=wa` / `-F dir=/etc/apparmor.d
+    -F perm=wa`).
+    """
+    return _all_paths_watched(facts, _MAC_POLICY_PATHS)
+
+
+_evidence_mac_policy_logged = _evidence_paths_watched(_MAC_POLICY_PATHS)
+
+
+_LOGIN_PATHS = ("/var/log/lastlog", "/var/run/faillock")
+
+
+def _evaluate_logins_logged(facts: SystemFacts) -> bool:
+    """Real audit (identical condition across all 6 real target documents,
+    e.g. debian_linux_12's "Ensure login and logout events are collected"):
+    `auditctl -l | grep -Ps -- '(lastlog|faillock)'` must show both `-w
+    /var/log/lastlog -p wa -k logins` and `-w /var/run/faillock -p wa -k
+    logins` (or debian_linux_13's `-F path=... -F perm=wa` equivalents).
+    """
+    return _all_paths_watched(facts, _LOGIN_PATHS)
+
+
+_evidence_logins_logged = _evidence_paths_watched(_LOGIN_PATHS)
+
+
+_SESSION_PATHS = ("/var/run/utmp", "/var/log/wtmp", "/var/log/btmp")
+
+
+def _evaluate_session_logged(facts: SystemFacts) -> bool:
+    """Real audit (identical condition across all 6 real target documents,
+    e.g. debian_linux_12's "Ensure session initiation information is
+    collected"): `auditctl -l | grep -Ps --
+    '(\\/var\\/run\\/utmp|\\/var\\/log\\/wtmp|\\/var\\/log\\/btmp)'` must
+    show `-w /var/run/utmp -p wa -k session`, `-w /var/log/wtmp -p wa -k
+    session`, and `-w /var/log/btmp -p wa -k session` (or debian_linux_13's
+    `-F path=... -F perm=wa` equivalents).
+    """
+    return _all_paths_watched(facts, _SESSION_PATHS)
+
+
+_evidence_session_logged = _evidence_paths_watched(_SESSION_PATHS)
+
+
+def _evaluate_mounts_logged(facts: SystemFacts) -> bool:
+    """Real audit (identical condition across all 6 real target documents,
+    e.g. debian_linux_12's "Ensure successful file system mounts are
+    collected"): with `UID_MIN=$(awk '/^\\s*UID_MIN/{print $2}'
+    /etc/login.defs)`, `auditctl -l | grep -Ps -- '\\-S mount'` must show a
+    rule shaped like `-a always,exit -F arch=b64 -S mount -F
+    auid>=$UID_MIN -F auid!=unset -k mounts`. Fails closed if UID_MIN isn't
+    set in login.defs, since the audit condition depends on it entirely.
+    """
+    uid_min = _uid_min(facts)
+    if uid_min is None:
+        return False
+    patterns = (
+        r"-a\s+always,exit",
+        r"-S\s*\S*mount",
+        rf"auid>=\s*{uid_min}\b",
+        r"auid!=(unset|-1|4294967295)",
+        r"(-k\s+\S+|\bkey=\S+)",
+    )
+    return _any_audit_line_matches(facts, *patterns)
+
+
+def _evidence_mounts_logged(facts: SystemFacts) -> str:
+    uid_min = _uid_min(facts)
+    if uid_min is None:
+        return "login.defs: UID_MIN not set -- can't evaluate mounts audit rule"
+    ok = _evaluate_mounts_logged(facts)
+    return f"audit rules: mount syscall rule (auid>={uid_min}) {'found' if ok else 'NOT found'}"
+
+
+def _access_rule_present(facts: SystemFacts, uid_min: int, exit_code: str) -> bool:
+    patterns = (
+        r"-a\s+always,exit",
+        r"creat",
+        r"open",
+        r"truncate",
+        rf"auid>=\s*{uid_min}\b",
+        r"auid!=(unset|-1|4294967295)",
+        rf"exit=-{exit_code}\b",
+        r"(-k\s+\S+|\bkey=\S+)",
+    )
+    return _any_audit_line_matches(facts, *patterns)
+
+
+def _evaluate_unsuccessful_access_logged(facts: SystemFacts) -> bool:
+    """Real audit (identical condition across all 6 real target documents,
+    e.g. debian_linux_12's "Ensure unsuccessful file access attempts are
+    collected"): with login.defs' UID_MIN, `auditctl -l | grep -Ps --
+    '(EACCES|EPERM)'` must show two separate rules -- one with `-F
+    exit=-EACCES`, one with `-F exit=-EPERM` -- each shaped like `-a
+    always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F
+    exit=-EACCES -F auid>=$UID_MIN -F auid!=unset -k access`. Fails closed
+    if UID_MIN isn't set in login.defs.
+    """
+    uid_min = _uid_min(facts)
+    if uid_min is None:
+        return False
+    return _access_rule_present(facts, uid_min, "EACCES") and _access_rule_present(facts, uid_min, "EPERM")
+
+
+def _evidence_unsuccessful_access_logged(facts: SystemFacts) -> str:
+    uid_min = _uid_min(facts)
+    if uid_min is None:
+        return "login.defs: UID_MIN not set -- can't evaluate access audit rules"
+    eacces_ok = _access_rule_present(facts, uid_min, "EACCES")
+    eperm_ok = _access_rule_present(facts, uid_min, "EPERM")
+    return (
+        f"audit rules (auid>={uid_min}): EACCES rule {'found' if eacces_ok else 'NOT found'}; "
+        f"EPERM rule {'found' if eperm_ok else 'NOT found'}"
+    )
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -3739,6 +4042,52 @@ CHECKS = [
         titles=["Ensure root path integrity"],
         evaluate=_evaluate_root_path_integrity,
         evidence=_evidence_root_path_integrity,
+    ),
+    # Group: audit rule collection (round 4) -- see the comment block above
+    # this group's evaluate()/evidence() functions for the shared old-vs-new
+    # rule-syntax rationale. "Ensure use of privileged commands are
+    # collected" was investigated and dropped (same comment block) -- its
+    # real audit needs a per-target SUID/SGID enumeration that can't be
+    # derived deterministically here.
+    Check(
+        titles=["Ensure actions as another user are always logged"],
+        evaluate=_evaluate_user_emulation_logged,
+        evidence=_evidence_user_emulation_logged,
+    ),
+    Check(
+        titles=["Ensure events that modify date and time information are collected"],
+        evaluate=_evaluate_time_change_logged,
+        evidence=_evidence_time_change_logged,
+    ),
+    Check(
+        titles=["Ensure events that modify the sudo log file are collected"],
+        evaluate=_evaluate_sudo_log_file_logged,
+        evidence=_evidence_sudo_log_file_logged,
+    ),
+    Check(
+        titles=["Ensure events that modify the system's Mandatory Access Controls are collected"],
+        evaluate=_evaluate_mac_policy_logged,
+        evidence=_evidence_mac_policy_logged,
+    ),
+    Check(
+        titles=["Ensure login and logout events are collected"],
+        evaluate=_evaluate_logins_logged,
+        evidence=_evidence_logins_logged,
+    ),
+    Check(
+        titles=["Ensure session initiation information is collected"],
+        evaluate=_evaluate_session_logged,
+        evidence=_evidence_session_logged,
+    ),
+    Check(
+        titles=["Ensure successful file system mounts are collected"],
+        evaluate=_evaluate_mounts_logged,
+        evidence=_evidence_mounts_logged,
+    ),
+    Check(
+        titles=["Ensure unsuccessful file access attempts are collected"],
+        evaluate=_evaluate_unsuccessful_access_logged,
+        evidence=_evidence_unsuccessful_access_logged,
     ),
 ]
 
