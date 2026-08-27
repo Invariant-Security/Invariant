@@ -2,6 +2,7 @@
 (CIS, AWS, FIRST/CVSS, OWASP, ...).
 """
 import json
+import re
 import httpx
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,77 @@ class BenchmarkMetadata:
     source_page: str
 
 
+@dataclass(frozen=True)
+class DownloadableBenchmark:
+    """One PDF advertised by the anonymous CIS Downloads catalog."""
+
+    document_id: int
+    document_slug: str
+    product_label: str
+    title: str
+    technology_version: str
+    benchmark_version: str
+    file_name: str
+    pardot_path: str
+    published_at: str
+
+    @property
+    def cli_name(self) -> str:
+        return f"cis-{self.document_slug.replace('_', '-')}"
+
+    @property
+    def version_label(self) -> str:
+        return f"{self.title} v{self.benchmark_version}"
+
+    @property
+    def download_url(self) -> str:
+        return f"https://learn.cisecurity.org{self.pardot_path}"
+
+
+def _document_slug(product_label: str, title: str) -> str:
+    """Derive Invariant's stable document identity from a CIS title."""
+    family = {
+        "Debian Linux": "debian_linux",
+        "Ubuntu Linux": "ubuntu_linux",
+    }.get(product_label)
+    if family is None:
+        raise ValueError(f"unsupported CIS product: {product_label!r}")
+
+    match = re.search(r"\b(\d+(?:\.\d+)*)\b", title)
+    if match is None:
+        raise ValueError(f"cannot identify OS version from CIS title: {title!r}")
+    os_version = match.group(1).replace(".", "_")
+    stig_suffix = "_stig" if re.search(r"\bSTIG\b", title, re.IGNORECASE) else ""
+    return f"{family}_{os_version}{stig_suffix}"
+
+
+def _parse_catalog_benchmarks(
+    product_label: str, rows: list[dict]
+) -> list[DownloadableBenchmark]:
+    """Convert the Downloads page JSON into explicit, validated PDFs."""
+    benchmarks = []
+    for row in rows:
+        for document in row.get("documents", []):
+            pardot_path = document.get("pardot-id")
+            if not pardot_path:
+                continue
+            title = row.get("title", "")
+            benchmarks.append(
+                DownloadableBenchmark(
+                    document_id=int(document["id"]),
+                    document_slug=_document_slug(product_label, title),
+                    product_label=product_label,
+                    title=title,
+                    technology_version=str(row.get("technology_version", "")),
+                    benchmark_version=str(row["version"]),
+                    file_name=document["filename"],
+                    pardot_path=pardot_path,
+                    published_at=str(row.get("published", "")),
+                )
+            )
+    return benchmarks
+
+
 def _extract_jss_state(html: str) -> dict:
     """Parse the Sitecore JSS state CIS embeds as JSON on each benchmark page.
 
@@ -68,6 +140,8 @@ class CIS:
     """CIS source adapter interface. download with httpx"""
 
     name = "cis"
+    catalog_url = "https://downloads.cisecurity.org/#/"
+    monitored_products = ("Debian Linux", "Ubuntu Linux")
 
     def download(self) -> tuple[bytes, str]:
         try:
@@ -125,6 +199,91 @@ class CIS:
             f"benchmark not found: {product_slug} {technology_version} v{benchmark_version}"
         )
 
+    def discover_benchmarks(
+        self, product_labels: tuple[str, ...] | None = None
+    ) -> list[DownloadableBenchmark]:
+        """Crawl every Debian/Ubuntu PDF displayed by CIS Downloads.
+
+        The Laravel endpoints require the anonymous browser session created
+        by the page. Same-origin GETs run inside it; no login is used.
+        """
+        from playwright.sync_api import sync_playwright
+
+        wanted = product_labels or self.monitored_products
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.goto(self.catalog_url, wait_until="networkidle")
+                technologies = page.evaluate(
+                    """async () => {
+                        const response = await fetch('/technology', {
+                            headers: {
+                                'X-CSRF-TOKEN': window.Laravel.csrfToken,
+                                'X-Requested-With': 'XMLHttpRequest'
+                            }
+                        });
+                        if (!response.ok) throw new Error(`technology: ${response.status}`);
+                        return response.json();
+                    }"""
+                )
+                flattened = [
+                    technology
+                    for group in technologies.values()
+                    for technology in group
+                ]
+                by_title = {technology["title"]: technology for technology in flattened}
+
+                discovered = []
+                for product_label in wanted:
+                    technology = by_title.get(product_label)
+                    if technology is None:
+                        raise LookupError(f"CIS product not found: {product_label!r}")
+                    rows = page.evaluate(
+                        """async (technologyId) => {
+                            const response = await fetch(
+                                `/technology/${technologyId}/benchmarks/latest`,
+                                {headers: {
+                                    'X-CSRF-TOKEN': window.Laravel.csrfToken,
+                                    'X-Requested-With': 'XMLHttpRequest'
+                                }}
+                            );
+                            if (!response.ok) throw new Error(`benchmarks: ${response.status}`);
+                            return response.json();
+                        }""",
+                        technology["id"],
+                    )
+                    discovered.extend(_parse_catalog_benchmarks(product_label, rows))
+                return sorted(
+                    discovered,
+                    key=lambda item: (
+                        item.product_label,
+                        item.document_slug,
+                        item.benchmark_version,
+                        item.file_name,
+                    ),
+                )
+            finally:
+                browser.close()
+
+    def download_discovered(self, benchmark: DownloadableBenchmark) -> tuple[bytes, str]:
+        """Download a discovered PDF using the anonymous GET flow."""
+        with httpx.Client(follow_redirects=True, timeout=120.0) as client:
+            client.cookies.set(
+                "documentId", str(benchmark.document_id), domain=".cisecurity.org"
+            )
+            response = client.get(benchmark.download_url)
+            response.raise_for_status()
+
+        content_type = response.headers.get("content-type", "").lower()
+        if "application/pdf" not in content_type or not response.content.startswith(b"%PDF"):
+            raise ValueError(
+                f"CIS returned non-PDF content for {benchmark.version_label!r} "
+                f"({content_type or 'missing content-type'})"
+            )
+        extension = Path(benchmark.file_name).suffix.lstrip(".").lower() or "pdf"
+        return response.content, extension
+
     def download_benchmark(self, product_label: str, version_label: str) -> tuple[bytes, str]:
         """Download one benchmark PDF from downloads.cisecurity.org -- no login.
 
@@ -139,33 +298,14 @@ class CIS:
         downloads.cisecurity.org needs neither -- confirmed by downloading
         the same file both ways and comparing SHA-256 hashes (identical).
         """
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            context = browser.new_context(accept_downloads=True)
-            page = context.new_page()
-            try:
-                page.goto("https://downloads.cisecurity.org/#/", wait_until="networkidle")
-                page.get_by_text(product_label, exact=False).first.click()
-                page.wait_for_timeout(1500)
-
-                entry = page.get_by_text(version_label, exact=True)
-                if entry.count() == 0:
-                    raise LookupError(f"no entry for {version_label!r} under {product_label!r}")
-                download_link = entry.locator(
-                    "xpath=following::a[contains(text(), 'Download PDF')][1]"
-                )
-
-                with context.expect_event("download") as download_info:
-                    download_link.click()
-                download = download_info.value
-
-                content = Path(download.path()).read_bytes()
-                extension = Path(download.suggested_filename).suffix.lstrip(".") or "pdf"
-                return content, extension
-            finally:
-                browser.close()
+        matches = [
+            benchmark
+            for benchmark in self.discover_benchmarks((product_label,))
+            if benchmark.version_label == version_label
+        ]
+        if not matches:
+            raise LookupError(f"no entry for {version_label!r} under {product_label!r}")
+        return self.download_discovered(matches[0])
 
 
 # The CIS Debian benchmarks the bxsec Docker demo targets, one entry per

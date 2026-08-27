@@ -73,28 +73,28 @@ comments above `CHECKS`'s Group F/I/J entries).
 (`infra/docker/quickdemo-{debian,ubuntu}-hardened/`, **not** the 6
 dev/test images under `infra/docker/{debian,ubuntu}-*` -- those are
 untouched, relied on by `tests/assessment/`'s `@pytest.mark.integration`
-tests) that are hardened via plain config edits (`chmod`/`chown`/`sed`, no
-extra packages beyond `openssh-server`, matching the base pipeline's own 6
-demo containers) to **PASS every `Check` that pure config can satisfy.**
+tests) that are hardened via plain config edits (`chmod`/`chown`/`sed`) plus
+(as of round 2) a handful of real packages (`ufw`/`sudo`/`auditd`/
+`audispd-plugins`/`aide`/`aide-common`, alongside the base pipeline's own
+`openssh-server`) whose entire point *is* package presence -- there's no
+"pure config" way to pass a check that literally asks "is X installed?" --
+to **PASS every `Check` that's achievable without a systemd-capable image
+or real separate filesystem mounts.**
 
-Confirmed empirically (built and assessed against live containers during
-development): of the 80 `CHECKS`, exactly **65 pass** on both hardened
-images with zero further changes, and the same **15 fail structurally** on
-both, regardless of configuration -- because the underlying package/file
-simply isn't present, and installing it would mean a new package (against
-`quickdemo.sh`'s "fully offline, no network after the first image build"
-constraint, and against `CLAUDE.md`'s "no blind dependency additions"
-rule):
+Confirmed empirically (built and assessed against live containers): of the
+165 `CHECKS`, exactly **140 pass** on both hardened images with zero
+further changes, and the same **25 fail structurally** on both, regardless
+of configuration -- because the underlying package/file/rule simply isn't
+present or loaded, and installing what's left would mean either a
+systemd-capable base image, real partition mounts, or actually configuring
+and loading a real auditd rule set, all bigger changes than "add a
+package":
 
 | Check title | Why it's structural |
 |---|---|
-| Ensure pam_pwquality module is enabled | `pam_pwquality.so` ships in `libpam-pwquality`, not installed (confirmed: not present under `/usr/lib/*/security/` on a bare `openssh-server`-only image). `pwquality.conf`'s own *directives* (minlen, complexity, difok, ...) are still demo-eligible -- CIS greps that file directly, independent of whether the module is loaded. |
-| Ensure audit configuration files owner is configured | no `auditd` installed -- `/etc/audit/` doesn't exist |
-| Ensure audit configuration files group owner is configured | same |
-| Ensure audit tools owner is configured | same -- `/sbin/auditctl` etc. don't exist |
-| Ensure audit tools group owner is configured | same |
-| Ensure the audit configuration is immutable | same -- no audit rules to be immutable |
-| Ensure sudo log file exists | no `sudo` installed -- `/etc/sudoers` doesn't exist |
+| Ensure pam_pwquality module is enabled | `pam_pwquality.so` ships in `libpam-pwquality`, not installed (confirmed: not present under `/usr/lib/*/security/` on a bare image). `pwquality.conf`'s own *directives* (minlen, complexity, difok, ...) are still demo-eligible -- CIS greps that file directly, independent of whether the module is loaded. |
+| Ensure the audit configuration is immutable | `auditd`/`audispd-plugins` **are** installed (round 2 -- needed for "Ensure auditd packages are installed"), which also fixed 4 *other* audit-ownership checks that used to be structural gaps here for free (`/etc/audit/`, `/sbin/auditctl` etc. now exist with correct ownership by default). This one still fails -- it needs an actual loaded, immutable-flagged rule set, not just the package installed. |
+| Ensure sudo log file exists | `sudo` **is** installed (round 2), but its default `/etc/sudoers` has no `Defaults logfile=...` line -- a real gap, just not one round 2's own checks needed to close. |
 | Ensure access to /etc/crontab is configured | no `cron` installed -- `/etc/crontab` doesn't exist (unlike `/etc/cron.d`/`/etc/cron.daily`, which ship on a bare image via other packages and *are* demo-eligible) |
 | Ensure access to /etc/cron.hourly is configured | same -- `cron` not installed |
 | Ensure access to /etc/cron.weekly is configured | same |
@@ -103,8 +103,28 @@ rule):
 | Ensure journald Storage is configured | same |
 | Ensure journald log file rotation is configured | same |
 | Ensure access to bootloader config is configured | `/boot/grub/grub.cfg` never exists in a container (no bootloader) |
+| Ensure access to the su command is restricted | round 3 -- neither image configures `/etc/pam.d/su`'s `pam_wheel.so` line |
+| Ensure password failed attempts lockout includes root account | round 3 -- neither image sets `even_deny_root`/`root_unlock_time` in `faillock.conf` |
+| Ensure a single time synchronization daemon is in use | round 4 -- neither `chrony` nor `systemd-timesyncd` is installed on either image |
+| Ensure audit logs are not automatically deleted | round 4 -- `auditd.conf`'s shipped default (`max_log_file_action ROTATE`) doesn't meet CIS's required `keep_logs` |
+| Ensure system is disabled when audit logs are full | round 4 -- shipped default (`disk_full_action SUSPEND`) isn't `halt`/`single` |
+| Ensure system warns when audit logs are low on space | round 4 -- shipped default (`space_left_action SYSLOG`) isn't in the required set |
+| Ensure actions as another user are always logged | round 4 -- no real auditd rule loaded on either image (all 8 rows below share this one root cause) |
+| Ensure events that modify date and time information are collected | round 4, same root cause as above |
+| Ensure events that modify the sudo log file are collected | round 4, same root cause (also downstream of "Ensure sudo log file exists" above) |
+| Ensure events that modify the system's Mandatory Access Controls are collected | round 4, same root cause |
+| Ensure login and logout events are collected | round 4, same root cause |
+| Ensure session initiation information is collected | round 4, same root cause |
+| Ensure successful file system mounts are collected | round 4, same root cause |
+| Ensure unsuccessful file access attempts are collected | round 4, same root cause |
 
-This 15-title set is `scripts/quickdemo/misconfig_catalog.py`'s
+(`Ensure ufw is installed`, `Ensure sudo is installed`, `Ensure AIDE is
+installed`, the ~19 "package X is not in use" checks round 2 added, the 7
+of 10 auditd.conf-family checks round 4 added whose shipped defaults
+already comply, and the 2 local-interactive-user checks round 4 added are
+all demo-eligible and PASS today.)
+
+This 25-title set is `scripts/quickdemo/misconfig_catalog.py`'s
 `STRUCTURAL_GAP_TITLES` constant. `quickdemo.sh`'s final summary uses it to
 split every FAIL on a demo container into:
 

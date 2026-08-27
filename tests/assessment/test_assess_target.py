@@ -140,6 +140,57 @@ _SYSTEMIC_GAPS = {
     "2.4.1.8",  # /etc/cron.d (debian_linux_11 uses 2.4.1.7 instead, see below)
     "5.2.3",  # Ensure sudo log file exists
     "1.4.2",  # Ensure access to bootloader config is configured (Group J)
+    # Group K: "Ensure ufw is installed" -- ufw isn't installed on any of
+    # the 6 live containers (same "package never installed, never hardened
+    # for it" story as the rest of this set), confirmed via
+    # assess_target() against all 6. Id is "4.1.1" on 5 of 6 real target
+    # documents; ubuntu_linux_20_04 (the ubuntu-baseline target) uses
+    # "4.2.1" instead -- excluded/re-added per-target below, same pattern
+    # already used for "2.4.1.8"/"2.4.1.7".
+    "4.1.1",
+    # Round 2 (Groups L-Q): 6 of the 9 newly-added checks that fail on all
+    # 6 live containers share the same external_id everywhere (confirmed
+    # via assess_target() against all 6) -- none of the 6 Dockerfiles set
+    # sshd AllowUsers/AllowGroups/DenyUsers/DenyGroups, sshd Banner,
+    # ClientAliveInterval/CountMax, install sudo, or configure password
+    # expiration (login.defs PASS_MAX_DAYS/shadow max-days), same
+    # "package/directive never hardened for it" story as the rest of this
+    # set. The other 3 (MaxAuthTries, auditd packages, AIDE) drift per
+    # document -- see _ROUND2_GAP_BY_DOCUMENT below.
+    "5.1.4",  # Ensure sshd access is configured
+    "5.1.5",  # Ensure sshd Banner is configured
+    "5.1.7",  # Ensure sshd ClientAliveInterval and ClientAliveCountMax are configured
+    "5.2.1",  # Ensure sudo is installed
+    "5.2.2",  # Ensure sudo commands use pty
+    "5.4.1.1",  # Ensure password expiration is configured
+    # Round 3 (kernel modules, faillock, su-restriction, root-umask, full-fs
+    # scans): only 2 of the 20 newly-added checks fail on the 6 live
+    # containers, both with the same external_id on all 6 (confirmed via
+    # assess_target()) -- none of the 6 Dockerfiles configure
+    # /etc/pam.d/su's pam_wheel.so line, or set even_deny_root/
+    # root_unlock_time in faillock.conf. Everything else this round
+    # (12 kernel-module checks -- /lib/modules never exists in any of the 6
+    # containers, so they PASS vacuously per CIS's own documented passing
+    # state; 2 more faillock checks; root umask; world-writable/unowned/
+    # root-PATH) already passes with zero further changes.
+    "5.2.7",  # Ensure access to the su command is restricted
+    "5.3.3.1.3",  # Ensure password failed attempts lockout includes root account
+}
+
+# Round 2: the other 3 of the 9 newly-failing checks drift per document.
+# MaxAuthTries is "5.1.16" everywhere except debian_linux_13 ("5.1.17");
+# auditd/AIDE's numbering follows the same per-document section drift
+# already established by _AUDIT_FILES_GAP_BY_DOCUMENT above (debian_11 uses
+# 6.4.x/6.1.x, ubuntu_20_04 uses 6.3.x/6.1.x, the other 4 use 6.2.x/6.3.x)
+# -- confirmed via assess_target() against all 6 live containers, not
+# guessed.
+_ROUND2_GAP_BY_DOCUMENT = {
+    "debian_linux_11": {"5.1.16", "6.1.1", "6.4.1.1"},
+    "debian_linux_12": {"5.1.16", "6.2.1.1", "6.3.1"},
+    "debian_linux_13": {"5.1.17", "6.2.1.1", "6.3.1"},
+    "ubuntu_linux_20_04": {"5.1.16", "6.1.1", "6.3.1.1"},
+    "ubuntu_linux_22_04": {"5.1.16", "6.2.1.1", "6.3.1"},
+    "ubuntu_linux_24_04": {"5.1.16", "6.2.1.1", "6.3.1"},
 }
 
 # Group I: auditd config/tooling file ownership + rules immutability. None
@@ -185,6 +236,67 @@ _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT = {
     "ubuntu_linux_24_04": {"5.1.15", "5.1.17"},
 }
 
+# Round 4 (auditd.conf family + audit rule collection + single time-sync
+# daemon): 16 of the 23 newly-added checks fail on all 6 live containers,
+# same "package/rule never configured for it" story as the rest of this
+# file -- confirmed via assess_target() against all 6, not guessed. None of
+# the 6 Dockerfiles install chrony or systemd-timesyncd explicitly (the
+# single-time-sync-daemon check wants exactly one, neither counts as a
+# fail, external_id "2.3.1.1" on every document), configure any real
+# auditd.conf directive beyond its shipped defaults (7 of the 10 auditd.conf-
+# family checks already pass on the untouched defaults; the other 3 --
+# storage size, not-auto-deleted, disabled/warns-on-full -- and the log
+# file/dir/tools mode checks fail because the shipped defaults don't meet
+# CIS's stricter modes/values), or load any real audit rule (all 8
+# audit-rule-collection checks fail closed on an empty audit.rules). Same
+# per-document numbering drift as _AUDIT_FILES_GAP_BY_DOCUMENT above
+# (this whole family lives in the same 6.x audit section), looked up by
+# document for the same collision-safety reason.
+_ROUND4_GAP_BY_DOCUMENT = {
+    "debian_linux_11": {
+        "2.3.1.1",
+        "6.4.2.1", "6.4.2.2", "6.4.2.3", "6.4.2.4",
+        "6.4.3.2", "6.4.3.3", "6.4.3.4", "6.4.3.7",
+        "6.4.3.10", "6.4.3.11", "6.4.3.12", "6.4.3.14",
+        "6.4.4.1", "6.4.4.4", "6.4.4.8",
+    },
+    "debian_linux_12": {
+        "2.3.1.1",
+        "6.2.2.1", "6.2.2.2", "6.2.2.3", "6.2.2.4",
+        "6.2.3.2", "6.2.3.3", "6.2.3.4", "6.2.3.17",
+        "6.2.3.19", "6.2.3.20", "6.2.3.21", "6.2.3.23",
+        "6.2.4.1", "6.2.4.2", "6.2.4.8",
+    },
+    "debian_linux_13": {
+        "2.3.1.1",
+        "6.2.2.1", "6.2.2.2", "6.2.2.3", "6.2.2.4",
+        "6.2.3.2", "6.2.3.3", "6.2.3.4", "6.2.3.11",
+        "6.2.3.21", "6.2.3.22", "6.2.3.23", "6.2.3.26",
+        "6.2.4.1", "6.2.4.4", "6.2.4.8",
+    },
+    "ubuntu_linux_20_04": {
+        "2.3.1.1",
+        "6.3.2.1", "6.3.2.2", "6.3.2.3", "6.3.2.4",
+        "6.3.3.2", "6.3.3.3", "6.3.3.4", "6.3.3.7",
+        "6.3.3.10", "6.3.3.11", "6.3.3.12", "6.3.3.14",
+        "6.3.4.1", "6.3.4.4", "6.3.4.8",
+    },
+    "ubuntu_linux_22_04": {
+        "2.3.1.1",
+        "6.2.2.1", "6.2.2.2", "6.2.2.3", "6.2.2.4",
+        "6.2.3.2", "6.2.3.3", "6.2.3.4", "6.2.3.7",
+        "6.2.3.10", "6.2.3.11", "6.2.3.12", "6.2.3.14",
+        "6.2.4.1", "6.2.4.4", "6.2.4.8",
+    },
+    "ubuntu_linux_24_04": {
+        "2.3.1.1",
+        "6.2.2.1", "6.2.2.2", "6.2.2.3", "6.2.2.4",
+        "6.2.3.2", "6.2.3.3", "6.2.3.4", "6.2.3.17",
+        "6.2.3.19", "6.2.3.20", "6.2.3.21", "6.2.3.23",
+        "6.2.4.1", "6.2.4.2", "6.2.4.8",
+    },
+}
+
 
 def test_assess_debian_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-debian-baseline")
@@ -199,7 +311,9 @@ def test_assess_debian_baseline_fails_only_sshd_config_permissions():
         (_SYSTEMIC_GAPS - {"2.4.1.8"})
         | {"2.4.1.7", "6.2.1.1.3", "6.2.1.1.5", "6.2.1.1.6"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_11"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_11"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_11"]
+        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_11"]
+        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_11"],
     )
 
 
@@ -213,7 +327,9 @@ def test_assess_debian_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
         _SYSTEMIC_GAPS
         | {"5.1.20", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_12"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_12"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_12"]
+        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_12"]
+        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_12"],
     )
 
 
@@ -227,7 +343,9 @@ def test_assess_debian_permissions_bad_fails_only_shadow_and_sshd_config_permiss
         _SYSTEMIC_GAPS
         | {"7.1.5", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_13"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_13"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_13"]
+        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_13"]
+        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_13"],
     )
 
 
@@ -235,12 +353,17 @@ def test_assess_ubuntu_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-ubuntu-baseline")
 
     assert len(findings) == len(CHECKS)
+    # ubuntu_linux_20_04 (this target's document) uses "4.2.1" for "Ensure
+    # ufw is installed", not the "4.1.1" every other real target document
+    # uses -- see _SYSTEMIC_GAPS's Group K comment above.
     _assert_fails_only(
         findings,
-        _SYSTEMIC_GAPS
-        | {"6.2.1.3", "6.2.2.3", "6.2.2.4"}
+        (_SYSTEMIC_GAPS - {"4.1.1"})
+        | {"4.2.1", "6.2.1.3", "6.2.2.3", "6.2.2.4"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
+        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
+        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
     )
 
 
@@ -254,7 +377,9 @@ def test_assess_ubuntu_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
         _SYSTEMIC_GAPS
         | {"5.1.20", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_22_04"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
+        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
+        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_22_04"],
     )
 
 
@@ -268,7 +393,9 @@ def test_assess_ubuntu_permissions_bad_fails_only_shadow_and_sshd_config_permiss
         _SYSTEMIC_GAPS
         | {"7.1.5", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
-        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_24_04"],
+        | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
+        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
+        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_24_04"],
     )
 
 
