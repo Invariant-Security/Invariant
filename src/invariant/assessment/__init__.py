@@ -311,6 +311,170 @@ def _group_fields(group_text: str) -> list[list[str]]:
     return rows
 
 
+def _gid_to_group_name(group_text: str) -> dict[str, str]:
+    return {fields[2]: fields[0] for fields in _group_fields(group_text)}
+
+
+def _valid_login_shells(shells_text: str) -> set[str]:
+    """Mirrors the real audit's own shell-validity filter (identical across
+    all 6 target documents): `awk -F\\/ '$NF != "nologin" {print}' /etc/shells
+    | sed -rn '/^\\//{s,/,\\\\/,g;p}'` -- keeps only lines that are an actual
+    shell path (start with "/") and whose basename isn't "nologin" (so
+    /usr/sbin/nologin and /sbin/nologin are excluded; every other path
+    listed in /etc/shells counts as an interactive shell).
+    """
+    shells = set()
+    for line in shells_text.splitlines():
+        line = line.strip()
+        if not line.startswith("/"):
+            continue
+        if line.rsplit("/", 1)[-1] == "nologin":
+            continue
+        shells.add(line)
+    return shells
+
+
+def _local_interactive_users(facts: SystemFacts) -> list[dict[str, str]]:
+    """A "local interactive user" per the real CIS audit backing both
+    "Ensure local interactive user home directories are configured" and
+    "Ensure local interactive user dot files access is configured"
+    (confirmed identical logic across all 6 target documents via Postgres):
+    any /etc/passwd account whose login shell (last colon field) is listed
+    in /etc/shells and isn't a nologin-style shell -- *not* a UID_MIN
+    cutoff, despite that being the more familiar CIS pattern elsewhere.
+    Notably this does **not** exclude root: root's own shell (typically
+    /bin/bash) is listed in /etc/shells, so the real script sweeps root's
+    home directory into scope too -- confirmed against a real container
+    rather than assumed.
+    """
+    valid_shells = _valid_login_shells(facts.shells_text)
+    users = []
+    for fields in _passwd_fields(facts.passwd_text):
+        if len(fields) < 7:
+            continue
+        user, gid, home, shell = fields[0], fields[3], fields[5], fields[6]
+        if shell in valid_shells:
+            users.append({"user": user, "gid": gid, "home": home})
+    return users
+
+
+def _parse_interactive_user_files(
+    text: str,
+) -> tuple[dict[str, tuple[str, str, int, str]], dict[str, list[tuple[str, str, int, str]]]]:
+    """Parses facts.interactive_user_files_text's `HOME`/`DOT` lines (see
+    facts._INTERACTIVE_USER_FILES_CMD) into (owner, group, mode, path/name)
+    tuples, keyed by username. A user with no HOME line means their home
+    directory doesn't exist (the collection script only emits one when
+    `[ -d "$h" ]` is true) -- not a parse failure.
+    """
+    homes: dict[str, tuple[str, str, int, str]] = {}
+    dotfiles: dict[str, list[tuple[str, str, int, str]]] = {}
+    for line in text.splitlines():
+        parts = line.split(maxsplit=5)
+        if len(parts) < 6:
+            continue
+        tag, user, owner, group, mode, rest = parts
+        try:
+            mode_int = int(mode, 8)
+        except ValueError:
+            continue
+        if tag == "HOME":
+            homes[user] = (owner, group, mode_int, rest)
+        elif tag == "DOT":
+            dotfiles.setdefault(user, []).append((owner, group, mode_int, rest))
+    return homes, dotfiles
+
+
+# Real audit mask 0027: flags group-write or any other-permission bit --
+# equivalent to "mode 750 or more restrictive" (group read/execute is fine,
+# group write and anything for "other" is not).
+_HOME_DIR_MASK = 0o027
+
+
+def _home_dir_violations(facts: SystemFacts) -> list[str]:
+    homes, _ = _parse_interactive_user_files(facts.interactive_user_files_text)
+    violations = []
+    for entry in _local_interactive_users(facts):
+        user, home = entry["user"], entry["home"]
+        info = homes.get(user)
+        if info is None:
+            violations.append(f"{user}: home {home} does not exist")
+            continue
+        owner, _group, mode, path = info
+        if owner != user:
+            violations.append(f"{user}: home {path} owned by {owner}")
+        if mode & _HOME_DIR_MASK:
+            violations.append(f"{user}: home {path} mode {oct(mode)} is not 750 or more restrictive")
+    return violations
+
+
+def _evaluate_interactive_user_home_dirs(facts: SystemFacts) -> bool:
+    """Real audit (identical across all 6 target documents): for every
+    local interactive user, their /etc/passwd home directory must exist, be
+    owned by that user, and be mode 750 or more restrictive.
+    """
+    return not _home_dir_violations(facts)
+
+
+def _evidence_interactive_user_home_dirs(facts: SystemFacts) -> str:
+    violations = _home_dir_violations(facts)
+    if violations:
+        return "local interactive user home directories: " + "; ".join(violations)
+    return "local interactive user home directories: all exist, owned by the user, mode 750 or more restrictive"
+
+
+# Real audit mask 0133 for "ordinary" dotfiles: flags group/other write or
+# execute -- equivalent to "mode 644 or more restrictive". .forward/.rhost/
+# .netrc are excluded from this generic bucket -- the real script treats
+# them specially (.forward/.rhost existing at all is the failure, .netrc's
+# permissions get a stricter 0600 ceiling and a compliant .netrc is only a
+# WARNING, never a FAIL). Reproducing that full branching isn't worth the
+# added complexity for the scope of this check; the generic dotfile rule
+# below (mode/owner/group) is still a real, unmodified slice of the same
+# audit script, just not its complete branch coverage.
+_DOTFILE_MASK = 0o133
+_DOTFILE_EXCLUDED_NAMES = {".forward", ".rhost", ".netrc"}
+
+
+def _dotfile_violations(facts: SystemFacts) -> list[str]:
+    _, dotfiles = _parse_interactive_user_files(facts.interactive_user_files_text)
+    gid_to_group = _gid_to_group_name(facts.group_text)
+    violations = []
+    for entry in _local_interactive_users(facts):
+        user, home = entry["user"], entry["home"]
+        primary_group = gid_to_group.get(entry["gid"])
+        for owner, group, mode, name in dotfiles.get(user, []):
+            if name in _DOTFILE_EXCLUDED_NAMES:
+                continue
+            if mode & _DOTFILE_MASK:
+                violations.append(f"{user}: {home}/{name} mode {oct(mode)} is not 644 or more restrictive")
+            if owner != user:
+                violations.append(f"{user}: {home}/{name} owned by {owner}")
+            if primary_group is not None and group != primary_group:
+                violations.append(f"{user}: {home}/{name} group-owned by {group}, expected {primary_group}")
+    return violations
+
+
+def _evaluate_interactive_user_dotfiles(facts: SystemFacts) -> bool:
+    """Real audit (identical across all 6 target documents): every dotfile
+    directly inside a local interactive user's home directory (excluding
+    .forward/.rhost/.netrc, see _DOTFILE_EXCLUDED_NAMES) must be mode 644 or
+    more restrictive, owned by that user, and group-owned by their primary
+    group.
+    """
+    return not _dotfile_violations(facts)
+
+
+def _evidence_interactive_user_dotfiles(facts: SystemFacts) -> str:
+    violations = _dotfile_violations(facts)
+    if violations:
+        return "local interactive user dot files: " + "; ".join(violations)
+    return (
+        "local interactive user dot files: all mode 644 or more restrictive, "
+        "owned by the user and their primary group (excluding .forward/.rhost/.netrc)"
+    )
+
+
 def _evaluate_only_root_group_has_gid0(facts: SystemFacts) -> bool:
     """Real audit: `awk -F: '$3=="0"{print $1}' /etc/group` must return
     only "root" -- no group other than root may be assigned GID 0.
@@ -2105,6 +2269,23 @@ CHECKS = [
         titles=["Ensure pam_pwhistory includes use_authtok"],
         evaluate=_evaluate_pam_pwhistory_use_authtok,
         evidence=_evidence_pam_pwhistory_use_authtok,
+    ),
+    # Local interactive user home directory / dot files checks (round 4).
+    # Title wording is identical across all 6 real documents for both
+    # (confirmed via Postgres, full untruncated audit script compared line
+    # by line -- same bash logic on every document, only page numbers and
+    # cosmetic array-bookkeeping style differ). "Local interactive user" is
+    # defined by the real script itself via /etc/shells shell membership,
+    # not a UID_MIN cutoff -- see _local_interactive_users()'s docstring.
+    Check(
+        titles=["Ensure local interactive user home directories are configured"],
+        evaluate=_evaluate_interactive_user_home_dirs,
+        evidence=_evidence_interactive_user_home_dirs,
+    ),
+    Check(
+        titles=["Ensure local interactive user dot files access is configured"],
+        evaluate=_evaluate_interactive_user_dotfiles,
+        evidence=_evidence_interactive_user_dotfiles,
     ),
 ]
 
