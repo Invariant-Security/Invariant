@@ -185,6 +185,45 @@ _TEXT_BLOCKS = [
         r"find /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} + 2>/dev/null | grep -v 'audit=1' 2>&1",
     ),
     ("interactive_user_files_text", "===INTERACTIVE_USER_FILES===", _INTERACTIVE_USER_FILES_CMD),
+    # auditd.conf directives + the file-system evidence the 10 Group A (per
+    # checks-backlog.md) auditd.conf-family checks need: the config files
+    # under /etc/audit/ (mode), the audit log directory + the files in it
+    # (mode/owner/group -- the directory is derived from auditd.conf's own
+    # `log_file` directive via `dirname`, the same way the real CIS audit
+    # scripts do it, not hardcoded, in case a real target ever overrides
+    # it), and a fixed set of audit tool binaries (mode). One shell command,
+    # 4 sections separated by their own markers (same "one text field, self-
+    # parsed sub-markers" shape as kernel_modules_text above).
+    #
+    # The tool list is 5 binaries (auditctl, aureport, ausearch, auditd,
+    # augenrules), not the 6 a real audit script usually lists -- confirmed
+    # via Postgres that debian_linux_13's own script for "Ensure audit tools
+    # mode is configured" drops /sbin/autrace from its array entirely (the
+    # other 5 real target documents keep it); checking a fixed 6-tool list
+    # would either wrongly fail debian_13 targets its own document doesn't
+    # require autrace from, or (if autrace were dropped everywhere) under-
+    # check the other 5 documents. This 5-tool intersection is exactly
+    # debian_13's own real condition, and a faithful (if partial) subset of
+    # the other 5's -- same kind of reduced-but-real subset already used by
+    # Group I's _AUDIT_TOOL_PATHS above, for the same reason.
+    (
+        "audit_conf_text",
+        "===AUDIT_CONF===",
+        "cat /etc/audit/auditd.conf 2>&1; echo '---CONFFILES---'; "
+        "find /etc/audit/ -type f \\( -name '*.conf' -o -name '*.rules' \\) "
+        "-printf 'mode=%m uid=%U gid=%G gname=%g path=%p\\n' 2>&1; "
+        "echo '---LOGDIR---'; "
+        "l_dir=\"$(dirname \"$(awk -F= '$1 ~ /^[[:space:]]*log_file[[:space:]]*$/ "
+        "{print $2}' /etc/audit/auditd.conf 2>/dev/null | xargs 2>/dev/null)\" 2>/dev/null)\"; "
+        "if [ -n \"$l_dir\" ] && [ -d \"$l_dir\" ]; then "
+        "stat -Lc 'mode=%a uid=%u gid=%g gname=%G path=%n' \"$l_dir\" 2>&1; "
+        "echo '---LOGFILES---'; "
+        "find \"$l_dir\" -maxdepth 1 -type f -printf 'mode=%m uid=%U gid=%G gname=%g path=%p\\n' 2>&1; "
+        "else echo 'LOGDIR_NOT_FOUND'; echo '---LOGFILES---'; fi; "
+        "echo '---TOOLS---'; "
+        "stat -Lc 'mode=%a uid=%u gid=%g gname=%G path=%n' /sbin/auditctl /sbin/aureport "
+        "/sbin/ausearch /sbin/auditd /sbin/augenrules 2>&1",
+    ),
 ]
 
 
@@ -259,6 +298,7 @@ class SystemFacts:
     root_path_probe_text: str = ""
     boot_grub_audit_text: str = ""
     interactive_user_files_text: str = ""
+    audit_conf_text: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -387,6 +427,7 @@ def _parse_collect_output(output: str) -> SystemFacts:
         root_path_probe_text=text_values["root_path_probe_text"],
         boot_grub_audit_text=text_values["boot_grub_audit_text"],
         interactive_user_files_text=text_values["interactive_user_files_text"],
+        audit_conf_text=text_values["audit_conf_text"],
     )
 
 
