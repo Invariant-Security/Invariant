@@ -2788,6 +2788,297 @@ def _evidence_root_path_integrity(facts: SystemFacts) -> str:
     return f"root PATH: {raw_path or '<empty>'}"
 
 
+# Group U: the auditd.conf family (checks-backlog.md's "Group A", 10
+# candidates confirmed via Postgres to share one real audit condition
+# across all 6 real target documents, cosmetic PDF page-number boilerplate
+# aside) -- auditd.conf directive checks, plus mode/owner checks over the
+# config files, the audit log directory + its files, and a fixed set of
+# audit tool binaries. All backed by the single facts.audit_conf_text field
+# (see facts.py's comment there, including the debian_linux_13-vs-the-
+# other-5 audit-tools-list discrepancy this group works around).
+_AUDIT_CONF_CONFFILES_MARKER = "---CONFFILES---"
+_AUDIT_CONF_LOGDIR_MARKER = "---LOGDIR---"
+_AUDIT_CONF_LOGFILES_MARKER = "---LOGFILES---"
+_AUDIT_CONF_TOOLS_MARKER = "---TOOLS---"
+
+
+def _audit_conf_sections(text: str) -> tuple[str, str, str, str, str]:
+    """Splits facts.audit_conf_text into (auditd.conf directive text,
+    config-file stat lines, log-directory stat line, log-file stat lines,
+    audit-tool stat lines) -- see facts.py's comment on that field for the
+    shell command that produces it.
+    """
+    i1 = text.find(_AUDIT_CONF_CONFFILES_MARKER)
+    i2 = text.find(_AUDIT_CONF_LOGDIR_MARKER)
+    i3 = text.find(_AUDIT_CONF_LOGFILES_MARKER)
+    i4 = text.find(_AUDIT_CONF_TOOLS_MARKER)
+    if -1 in (i1, i2, i3, i4):
+        return text, "", "", "", ""
+    return (
+        text[:i1],
+        text[i1 + len(_AUDIT_CONF_CONFFILES_MARKER) : i2],
+        text[i2 + len(_AUDIT_CONF_LOGDIR_MARKER) : i3],
+        text[i3 + len(_AUDIT_CONF_LOGFILES_MARKER) : i4],
+        text[i4 + len(_AUDIT_CONF_TOOLS_MARKER) :],
+    )
+
+
+def _audit_directives(facts: SystemFacts) -> dict[str, str]:
+    """auditd.conf is the same "key = value" shape as pwquality.conf/
+    pwhistory.conf, so parse_pwquality_conf() (defined above) already does
+    exactly what's needed here -- no new parser.
+    """
+    conf_text, _, _, _, _ = _audit_conf_sections(facts.audit_conf_text)
+    return parse_pwquality_conf(conf_text)
+
+
+def _parse_stat_lines(text: str) -> list[dict[str, str]]:
+    """Parses "mode=<octal> uid=<n> gid=<n> gname=<name> path=<path>" lines
+    -- the one line shape facts.audit_conf_text uses for every stat/find
+    section (config files, log directory, log files, tools), so this one
+    parser covers all of them. Lines that didn't produce a mode (a stat/find
+    error, e.g. a missing tool binary) are skipped -- same "missing means no
+    entry" posture as facts.file_stats.
+    """
+    entries = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        fields = dict(tok.split("=", 1) for tok in line.split() if "=" in tok)
+        if "mode" in fields:
+            entries.append(fields)
+    return entries
+
+
+def _mode_mask_ok(fields: dict[str, str], perm_mask: int) -> bool:
+    """True if none of perm_mask's bits are set in the entry's mode --
+    the exact `$(( l_mode & l_perm_mask )) -gt 0` test every real audit
+    script in this group uses (e.g. 0137 for "0640 or more restrictive",
+    0027 for "0750 or more restrictive", 0022 for "0755 or more
+    restrictive").
+    """
+    try:
+        return (int(fields["mode"], 8) & perm_mask) == 0
+    except (KeyError, ValueError):
+        return False
+
+
+def _evaluate_audit_conf_files_mode(facts: SystemFacts) -> bool:
+    """Matches the real audit (identical script across all 6 real target
+    documents): `find /etc/audit/ -type f ( -name "*.conf" -o -name
+    "*.rules" ) ...`, every matching file's mode must have none of 0137 set
+    (group write/exec, other rwx) -- "0640 or more restrictive". No
+    /etc/audit/ at all (auditd not installed) is a vacuous PASS, same
+    posture as the real script's empty-loop PASS branch.
+    """
+    _, conffiles_text, _, _, _ = _audit_conf_sections(facts.audit_conf_text)
+    return all(_mode_mask_ok(f, 0o137) for f in _parse_stat_lines(conffiles_text))
+
+
+def _evidence_audit_conf_files_mode(facts: SystemFacts) -> str:
+    _, conffiles_text, _, _, _ = _audit_conf_sections(facts.audit_conf_text)
+    entries = _parse_stat_lines(conffiles_text)
+    bad = [f"{f.get('path')}(mode={f.get('mode')})" for f in entries if not _mode_mask_ok(f, 0o137)]
+    if not entries:
+        return "/etc/audit/: no *.conf/*.rules files found"
+    if bad:
+        return "/etc/audit/ files not mode 0640 or stricter: " + ", ".join(bad)
+    return f"/etc/audit/: all {len(entries)} *.conf/*.rules files are mode 0640 or stricter"
+
+
+def _evaluate_audit_log_files_group_owner(facts: SystemFacts) -> bool:
+    """Matches the real audit (identical text across all 6 real target
+    documents): `log_group` in auditd.conf must be adm or root (an unset
+    directive is auditd's own root-group default, a vacuous PASS, same
+    posture as every other unset-directive-at-its-secure-default check in
+    this module), AND every file in the audit log directory (dirname of
+    `log_file`) must be group-owned by root or adm.
+    """
+    log_group = _audit_directives(facts).get("log_group")
+    if log_group is not None and log_group.strip().lower() not in ("adm", "root"):
+        return False
+    _, _, _, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    return all(f.get("gname") in ("root", "adm") for f in _parse_stat_lines(logfiles_text))
+
+
+def _evidence_audit_log_files_group_owner(facts: SystemFacts) -> str:
+    log_group = _audit_directives(facts).get("log_group", "<not set>")
+    _, _, _, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    entries = _parse_stat_lines(logfiles_text)
+    bad = [f"{f.get('path')}(group={f.get('gname')})" for f in entries if f.get("gname") not in ("root", "adm")]
+    parts = [f"auditd.conf: log_group {log_group}"]
+    parts.append("bad log file groups: " + ", ".join(bad) if bad else f"{len(entries)} log file(s) group root/adm")
+    return "; ".join(parts)
+
+
+def _evaluate_audit_log_files_mode(facts: SystemFacts) -> bool:
+    """Matches the real audit (identical script across all 6 real target
+    documents): every file in the audit log directory (dirname of
+    `log_file` in auditd.conf) must have mode with none of 0137 set ("0640
+    or more restrictive"). Unlike the config-files check above, a missing
+    auditd.conf or log directory is an explicit FAIL branch in the real
+    script, not a vacuous pass.
+    """
+    _, _, logdir_text, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    if not _parse_stat_lines(logdir_text):
+        return False
+    return all(_mode_mask_ok(f, 0o137) for f in _parse_stat_lines(logfiles_text))
+
+
+def _evidence_audit_log_files_mode(facts: SystemFacts) -> str:
+    _, _, logdir_text, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    if not _parse_stat_lines(logdir_text):
+        return "audit log directory: not found (check auditd.conf's log_file)"
+    entries = _parse_stat_lines(logfiles_text)
+    bad = [f"{f.get('path')}(mode={f.get('mode')})" for f in entries if not _mode_mask_ok(f, 0o137)]
+    if bad:
+        return "audit log files not mode 0640 or stricter: " + ", ".join(bad)
+    return f"audit log directory: all {len(entries)} file(s) are mode 0640 or stricter"
+
+
+def _evaluate_audit_log_files_owner(facts: SystemFacts) -> bool:
+    """Matches the real audit (identical script across all 6 real target
+    documents): every file in the audit log directory must be owned by
+    root. Same fail-closed-on-missing-directory posture as the mode check
+    above.
+    """
+    _, _, logdir_text, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    if not _parse_stat_lines(logdir_text):
+        return False
+    return all(f.get("uid") == "0" for f in _parse_stat_lines(logfiles_text))
+
+
+def _evidence_audit_log_files_owner(facts: SystemFacts) -> str:
+    _, _, logdir_text, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    if not _parse_stat_lines(logdir_text):
+        return "audit log directory: not found (check auditd.conf's log_file)"
+    entries = _parse_stat_lines(logfiles_text)
+    bad = [f"{f.get('path')}(uid={f.get('uid')})" for f in entries if f.get("uid") != "0"]
+    if bad:
+        return "audit log files not owned by root: " + ", ".join(bad)
+    return f"audit log directory: all {len(entries)} file(s) owned by root"
+
+
+def _evaluate_audit_log_storage_size(facts: SystemFacts) -> bool:
+    """Matches the real audit (identical text across all 6 real target
+    documents): `grep -Po -- '^\\h*max_log_file\\h*=\\h*\\d+\\b'
+    /etc/audit/auditd.conf` -- any numeric value is acceptable
+    (site-policy-defined), the directive just has to be present and
+    numeric.
+    """
+    value = _audit_directives(facts).get("max_log_file")
+    return value is not None and value.strip().isdigit()
+
+
+def _evidence_audit_log_storage_size(facts: SystemFacts) -> str:
+    value = _audit_directives(facts).get("max_log_file", "<not set>")
+    return f"auditd.conf: max_log_file {value}"
+
+
+def _evaluate_audit_logs_not_auto_deleted(facts: SystemFacts) -> bool:
+    """Matches the real audit (identical text across all 6 real target
+    documents): `grep max_log_file_action /etc/audit/auditd.conf` must be
+    `keep_logs`.
+    """
+    return _audit_directives(facts).get("max_log_file_action", "").strip().lower() == "keep_logs"
+
+
+def _evidence_audit_logs_not_auto_deleted(facts: SystemFacts) -> str:
+    value = _audit_directives(facts).get("max_log_file_action", "<not set>")
+    return f"auditd.conf: max_log_file_action {value}"
+
+
+def _evaluate_audit_tools_mode(facts: SystemFacts) -> bool:
+    """Matches the real audit (5 of 6 real target documents list 6 tools
+    including /sbin/autrace; debian_linux_13 lists 5, dropping autrace --
+    see facts.py's comment on audit_conf_text): every tool's mode must have
+    none of 0022 set ("0755 or more restrictive"), checked over the 5-tool
+    intersection facts.py collects.
+    """
+    _, _, _, _, tools_text = _audit_conf_sections(facts.audit_conf_text)
+    entries = _parse_stat_lines(tools_text)
+    return len(entries) > 0 and all(_mode_mask_ok(f, 0o022) for f in entries)
+
+
+def _evidence_audit_tools_mode(facts: SystemFacts) -> str:
+    _, _, _, _, tools_text = _audit_conf_sections(facts.audit_conf_text)
+    entries = _parse_stat_lines(tools_text)
+    if not entries:
+        return "audit tools: could not stat any of auditctl/aureport/ausearch/auditd/augenrules"
+    bad = [f"{f.get('path')}(mode={f.get('mode')})" for f in entries if not _mode_mask_ok(f, 0o022)]
+    if bad:
+        return "audit tools not mode 0755 or stricter: " + ", ".join(bad)
+    return f"audit tools: all {len(entries)} checked binaries are mode 0755 or stricter"
+
+
+_DISK_FULL_ACTIONS = ("halt", "single")
+_DISK_ERROR_ACTIONS = ("syslog", "single", "halt")
+
+
+def _evaluate_audit_disabled_when_full(facts: SystemFacts) -> bool:
+    """Matches the real audit (identical text across all 6 real target
+    documents): `disk_full_action` must be halt or single, AND
+    `disk_error_action` must be syslog, single, or halt.
+    """
+    directives = _audit_directives(facts)
+    return (
+        directives.get("disk_full_action", "").strip().lower() in _DISK_FULL_ACTIONS
+        and directives.get("disk_error_action", "").strip().lower() in _DISK_ERROR_ACTIONS
+    )
+
+
+def _evidence_audit_disabled_when_full(facts: SystemFacts) -> str:
+    directives = _audit_directives(facts)
+    full = directives.get("disk_full_action", "<not set>")
+    error = directives.get("disk_error_action", "<not set>")
+    return f"auditd.conf: disk_full_action {full}, disk_error_action {error}"
+
+
+_SPACE_LEFT_ACTIONS = ("email", "exec", "single", "halt")
+_ADMIN_SPACE_LEFT_ACTIONS = ("single", "halt")
+
+
+def _evaluate_audit_warns_low_space(facts: SystemFacts) -> bool:
+    """Matches the real audit (identical text across all 6 real target
+    documents): `space_left_action` must be email, exec, single, or halt,
+    AND `admin_space_left_action` must be single or halt.
+    """
+    directives = _audit_directives(facts)
+    return (
+        directives.get("space_left_action", "").strip().lower() in _SPACE_LEFT_ACTIONS
+        and directives.get("admin_space_left_action", "").strip().lower() in _ADMIN_SPACE_LEFT_ACTIONS
+    )
+
+
+def _evidence_audit_warns_low_space(facts: SystemFacts) -> str:
+    directives = _audit_directives(facts)
+    space = directives.get("space_left_action", "<not set>")
+    admin = directives.get("admin_space_left_action", "<not set>")
+    return f"auditd.conf: space_left_action {space}, admin_space_left_action {admin}"
+
+
+def _evaluate_audit_log_dir_mode(facts: SystemFacts) -> bool:
+    """Matches the real audit (identical script across all 6 real target
+    documents): the audit log directory (dirname of `log_file` in
+    auditd.conf) must have mode with none of 0027 set ("0750 or more
+    restrictive"). A missing auditd.conf or log directory is an explicit
+    FAIL branch in the real script, not a vacuous pass.
+    """
+    _, _, logdir_text, _, _ = _audit_conf_sections(facts.audit_conf_text)
+    entries = _parse_stat_lines(logdir_text)
+    return len(entries) == 1 and _mode_mask_ok(entries[0], 0o027)
+
+
+def _evidence_audit_log_dir_mode(facts: SystemFacts) -> str:
+    _, _, logdir_text, _, _ = _audit_conf_sections(facts.audit_conf_text)
+    entries = _parse_stat_lines(logdir_text)
+    if not entries:
+        return "audit log directory: not found (check auditd.conf's log_file)"
+    f = entries[0]
+    return f"audit log directory {f.get('path')}: mode={f.get('mode')}"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -3196,15 +3487,11 @@ CHECKS = [
     # Group I: auditd config/tooling file ownership + rules immutability.
     # Title wording is identical across all 6 real documents for these five
     # (confirmed via Postgres) -- no variant aliases needed, unlike the
-    # Group A /etc/shadow-style controls. Three candidates from this
-    # group's brief were looked at and dropped:
-    #   - "Ensure audit log files group owner is configured": real audit
-    #     targets the log_group parameter in /etc/audit/auditd.conf and the
-    #     directory named there (typically /var/log/audit) -- neither is in
-    #     facts._STAT_PATHS/_TEXT_BLOCKS, so this would always evaluate to
-    #     the same "not configured" answer regardless of target state.
-    #     Would need facts.py extended with an auditd.conf text block and a
-    #     /var/log/audit stat entry to do meaningfully.
+    # Group A /etc/shadow-style controls. Two candidates from this
+    # group's brief were looked at and dropped (a third, "Ensure audit log
+    # files group owner is configured", was dropped here for lacking an
+    # auditd.conf text block in facts.py -- Group U below adds that field
+    # and implements it):
     #   - "Ensure the audit configuration is loaded regardless of errors"
     #     (the `-c` flag equivalent of the immutable-flag check below):
     #     confirmed via Postgres this title only exists in debian_linux_13,
@@ -3739,6 +4026,62 @@ CHECKS = [
         titles=["Ensure root path integrity"],
         evaluate=_evaluate_root_path_integrity,
         evidence=_evidence_root_path_integrity,
+    ),
+    # Group U: the auditd.conf family (checks-backlog.md's "Group A", see
+    # the comment above facts.audit_conf_text and this group's own helper
+    # functions for the real audit text and the debian_linux_13 audit-tools
+    # scope discrepancy). Title wording is identical across all 6 real
+    # target documents for all 10 (confirmed via Postgres) -- no variant
+    # aliases needed.
+    Check(
+        titles=["Ensure audit configuration files mode is configured"],
+        evaluate=_evaluate_audit_conf_files_mode,
+        evidence=_evidence_audit_conf_files_mode,
+    ),
+    Check(
+        titles=["Ensure audit log files group owner is configured"],
+        evaluate=_evaluate_audit_log_files_group_owner,
+        evidence=_evidence_audit_log_files_group_owner,
+    ),
+    Check(
+        titles=["Ensure audit log files mode is configured"],
+        evaluate=_evaluate_audit_log_files_mode,
+        evidence=_evidence_audit_log_files_mode,
+    ),
+    Check(
+        titles=["Ensure audit log files owner is configured"],
+        evaluate=_evaluate_audit_log_files_owner,
+        evidence=_evidence_audit_log_files_owner,
+    ),
+    Check(
+        titles=["Ensure audit log storage size is configured"],
+        evaluate=_evaluate_audit_log_storage_size,
+        evidence=_evidence_audit_log_storage_size,
+    ),
+    Check(
+        titles=["Ensure audit logs are not automatically deleted"],
+        evaluate=_evaluate_audit_logs_not_auto_deleted,
+        evidence=_evidence_audit_logs_not_auto_deleted,
+    ),
+    Check(
+        titles=["Ensure audit tools mode is configured"],
+        evaluate=_evaluate_audit_tools_mode,
+        evidence=_evidence_audit_tools_mode,
+    ),
+    Check(
+        titles=["Ensure system is disabled when audit logs are full"],
+        evaluate=_evaluate_audit_disabled_when_full,
+        evidence=_evidence_audit_disabled_when_full,
+    ),
+    Check(
+        titles=["Ensure system warns when audit logs are low on space"],
+        evaluate=_evaluate_audit_warns_low_space,
+        evidence=_evidence_audit_warns_low_space,
+    ),
+    Check(
+        titles=["Ensure the audit log file directory mode is configured"],
+        evaluate=_evaluate_audit_log_dir_mode,
+        evidence=_evidence_audit_log_dir_mode,
     ),
 ]
 
