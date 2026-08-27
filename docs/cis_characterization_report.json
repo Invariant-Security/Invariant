@@ -1,0 +1,414 @@
+[
+  {
+    "filename": "cis_debian_linux_10_1.0.0_8abac02af919.pdf",
+    "path": "data/raw/cis/debian/cis_debian_linux_10_1.0.0_8abac02af919.pdf",
+    "family": "debian",
+    "slug": "debian_linux_10",
+    "version": "1.0.0",
+    "is_stig": false,
+    "page_count": 509,
+    "scoring_vocabulary": [
+      "Scored",
+      "Not Scored"
+    ],
+    "recommendation_count": 235,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 5.33,
+    "peak_rss_delta_mb": 14.25,
+    "independent_count_source": "human-verified test assertion (tests/extractor/test_extractor.py)",
+    "independent_count_value": 235,
+    "error": null
+  },
+  {
+    "filename": "cis_debian_linux_10_2.0.0_686fc2affc1a.pdf",
+    "path": "data/raw/cis/debian/cis_debian_linux_10_2.0.0_686fc2affc1a.pdf",
+    "family": "debian",
+    "slug": "debian_linux_10",
+    "version": "2.0.0",
+    "is_stig": false,
+    "page_count": 945,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 285,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 19.26,
+    "peak_rss_delta_mb": 23.87,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 285,
+    "error": null
+  },
+  {
+    "filename": "cis_debian_linux_11_2.0.0_be3c72ca29c9.pdf",
+    "path": "data/raw/cis/debian/cis_debian_linux_11_2.0.0_be3c72ca29c9.pdf",
+    "family": "debian",
+    "slug": "debian_linux_11",
+    "version": "2.0.0",
+    "is_stig": false,
+    "page_count": 1064,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 300,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 19.91,
+    "peak_rss_delta_mb": 0.42,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 300,
+    "error": null
+  },
+  {
+    "filename": "cis_debian_linux_11_stig_1.0.0_107148dbd6f9.pdf",
+    "path": "data/raw/cis/debian/cis_debian_linux_11_stig_1.0.0_107148dbd6f9.pdf",
+    "family": "debian",
+    "slug": "debian_linux_11_stig",
+    "version": "1.0.0",
+    "is_stig": true,
+    "page_count": 1192,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 387,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 30.34,
+    "peak_rss_delta_mb": 17.03,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 388,
+    "error": null
+  },
+  {
+    "filename": "cis_debian_linux_12_2.0.0_f0096d204a30.pdf",
+    "path": "data/raw/cis/debian/cis_debian_linux_12_2.0.0_f0096d204a30.pdf",
+    "family": "debian",
+    "slug": "debian_linux_12",
+    "version": "2.0.0",
+    "is_stig": false,
+    "page_count": 1092,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 333,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [
+      "1.2.1.3",
+      "1.2.1.4"
+    ],
+    "elapsed_seconds": 22.9,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 333,
+    "error": null
+  },
+  {
+    "filename": "cis_debian_linux_13_1.0.0_efa5df0e5b8d.pdf",
+    "path": "data/raw/cis/debian/cis_debian_linux_13_1.0.0_efa5df0e5b8d.pdf",
+    "family": "debian",
+    "slug": "debian_linux_13",
+    "version": "1.0.0",
+    "is_stig": false,
+    "page_count": 1063,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 343,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [
+      "1.2.1.3",
+      "1.2.1.4"
+    ],
+    "elapsed_seconds": 21.71,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 343,
+    "error": null
+  },
+  {
+    "filename": "cis_debian_linux_13_1.1.0_8d2ce94fce7e.pdf",
+    "path": "data/raw/cis/debian/cis_debian_linux_13_1.1.0_8d2ce94fce7e.pdf",
+    "family": "debian",
+    "slug": "debian_linux_13",
+    "version": "1.1.0",
+    "is_stig": false,
+    "page_count": 1156,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 350,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [
+      "1.2.1.4"
+    ],
+    "elapsed_seconds": 23.32,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 350,
+    "error": null
+  },
+  {
+    "filename": "cis_debian_linux_9_1.0.1_c9eac41ef840.pdf",
+    "path": "data/raw/cis/debian/cis_debian_linux_9_1.0.1_c9eac41ef840.pdf",
+    "family": "debian",
+    "slug": "debian_linux_9",
+    "version": "1.0.1",
+    "is_stig": false,
+    "page_count": 428,
+    "scoring_vocabulary": [
+      "Scored",
+      "Not Scored"
+    ],
+    "recommendation_count": 218,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 6.07,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 218,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_12_04_1.1.0_d280e30ffcf9.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_12_04_1.1.0_d280e30ffcf9.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_12_04",
+    "version": "1.1.0",
+    "is_stig": false,
+    "page_count": 153,
+    "scoring_vocabulary": [
+      "Scored",
+      "Not Scored"
+    ],
+    "recommendation_count": 180,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 3.44,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 187,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_14_04_2.1.0_26a3c49e9e1f.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_14_04_2.1.0_26a3c49e9e1f.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_14_04",
+    "version": "2.1.0",
+    "is_stig": false,
+    "page_count": 376,
+    "scoring_vocabulary": [
+      "Scored",
+      "Not Scored"
+    ],
+    "recommendation_count": 220,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 5.77,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 220,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_16_04_2.0.0_70a24200a9e0.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_16_04_2.0.0_70a24200a9e0.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_16_04",
+    "version": "2.0.0",
+    "is_stig": false,
+    "page_count": 542,
+    "scoring_vocabulary": [
+      "Scored",
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 243,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 8.78,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 243,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_18_04_2.2.0_2726ccb0c2c1.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_18_04_2.2.0_2726ccb0c2c1.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_18_04",
+    "version": "2.2.0",
+    "is_stig": false,
+    "page_count": 948,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 282,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 18.56,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 282,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_20_04_3.0.0_55b7089358e1.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_20_04_3.0.0_55b7089358e1.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_20_04",
+    "version": "3.0.0",
+    "is_stig": false,
+    "page_count": 1030,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 312,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 20.82,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 313,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_20_04_stig_2.0.0_e7c856f51db9.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_20_04_stig_2.0.0_e7c856f51db9.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_20_04_stig",
+    "version": "2.0.0",
+    "is_stig": true,
+    "page_count": 1280,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 389,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 21.45,
+    "peak_rss_delta_mb": 2.22,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 390,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_22_04_3.0.0_3ce1c344a2d7.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_22_04_3.0.0_3ce1c344a2d7.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_22_04",
+    "version": "3.0.0",
+    "is_stig": false,
+    "page_count": 985,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 306,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [],
+    "elapsed_seconds": 20.22,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 306,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_22_04_stig_1.0.0_b510ec5c665c.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_22_04_stig_1.0.0_b510ec5c665c.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_22_04_stig",
+    "version": "1.0.0",
+    "is_stig": true,
+    "page_count": 450,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 179,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [
+      "1.133"
+    ],
+    "elapsed_seconds": 8.87,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 179,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_24_04_2.0.0_9486caebef04.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_24_04_2.0.0_9486caebef04.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_24_04",
+    "version": "2.0.0",
+    "is_stig": false,
+    "page_count": 1083,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 332,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [
+      "1.2.1.3",
+      "1.2.1.4"
+    ],
+    "elapsed_seconds": 22.09,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 332,
+    "error": null
+  },
+  {
+    "filename": "cis_ubuntu_24_04_stig_1.0.0_612eeebb4dee.pdf",
+    "path": "data/raw/cis/ubuntu/cis_ubuntu_24_04_stig_1.0.0_612eeebb4dee.pdf",
+    "family": "ubuntu",
+    "slug": "ubuntu_24_04_stig",
+    "version": "1.0.0",
+    "is_stig": true,
+    "page_count": 472,
+    "scoring_vocabulary": [
+      "Automated",
+      "Manual"
+    ],
+    "recommendation_count": 188,
+    "duplicate_ids": [],
+    "empty_required_field_ids": {},
+    "empty_rationale_ids": [
+      "1.150"
+    ],
+    "elapsed_seconds": 9.34,
+    "peak_rss_delta_mb": 0.0,
+    "independent_count_source": "heuristic: 'Description:' label occurrences in raw text",
+    "independent_count_value": 188,
+    "error": null
+  }
+]
