@@ -79,7 +79,14 @@ _TEXT_BLOCKS = [
     ("hosts_allow_text", "===HOSTS_ALLOW===", "cat /etc/hosts.allow 2>&1"),
     ("hosts_deny_text", "===HOSTS_DENY===", "cat /etc/hosts.deny 2>&1"),
     ("installed_packages_text", "===INSTALLED_PACKAGES===", "dpkg-query -W -f='${Package}\\n' 2>&1"),
-    ("pwquality_text", "===PWQUALITY===", "cat /etc/security/pwquality.conf 2>&1"),
+    # /etc/security/pwquality.conf.d/*.conf is part of the real audit for
+    # "Ensure password quality checking is enforced" (Group U below) --
+    # pwquality reads the base file then the conf.d dir, later values
+    # winning, so concatenating both here (missing dir just yields its own
+    # `cat` error text, same established pattern) keeps parse_pwquality_conf()
+    # accurate for every check that already reads this field, not just the
+    # new one.
+    ("pwquality_text", "===PWQUALITY===", "cat /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf 2>&1"),
     ("pwhistory_text", "===PWHISTORY===", "cat /etc/security/pwhistory.conf 2>&1"),
     ("faillock_text", "===FAILLOCK===", "cat /etc/security/faillock.conf 2>&1"),
     ("sudoers_text", "===SUDOERS===", "cat /etc/sudoers 2>&1"),
@@ -150,6 +157,19 @@ _TEXT_BLOCKS = [
         "if [ -n \"$l_p\" ] && [ -d \"$l_p\" ]; then printf 'DIR:%s:' \"$l_p\"; "
         "stat -Lc 'mode=%a uid=%u gid=%g gname=%G' \"$l_p\" 2>&1; "
         "else printf 'NODIR:%s\\n' \"$l_p\"; fi; done",
+    ),
+    # Real audit for "Ensure auditing for processes that start prior to
+    # auditd is enabled" (Group U below), run close to verbatim: `find
+    # /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} +
+    # | grep -v 'audit=1'` should return nothing. A container has no
+    # /boot/grub/grub.cfg at all -- `find` matches zero files, the whole
+    # pipe naturally produces no output, same vacuous-PASS precedent as
+    # the kernel-module checks above (grep against something that isn't
+    # there correctly reports "nothing to flag").
+    (
+        "boot_grub_audit_text",
+        "===BOOT_GRUB_AUDIT===",
+        r"find /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} + 2>/dev/null | grep -v 'audit=1' 2>&1",
     ),
 ]
 
@@ -223,6 +243,7 @@ class SystemFacts:
     world_writable_text: str = ""
     unowned_text: str = ""
     root_path_probe_text: str = ""
+    boot_grub_audit_text: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -349,6 +370,7 @@ def _parse_collect_output(output: str) -> SystemFacts:
         world_writable_text=text_values["world_writable_text"],
         unowned_text=text_values["unowned_text"],
         root_path_probe_text=text_values["root_path_probe_text"],
+        boot_grub_audit_text=text_values["boot_grub_audit_text"],
     )
 
 

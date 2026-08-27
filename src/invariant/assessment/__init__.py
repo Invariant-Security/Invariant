@@ -2788,6 +2788,104 @@ def _evidence_root_path_integrity(facts: SystemFacts) -> str:
     return f"root PATH: {raw_path or '<empty>'}"
 
 
+# Group U: three more Grupo A/A2 candidates from docs/architecture/
+# checks-backlog.md, confirmed independently against Postgres (audit text
+# identical -- modulo PDF page-break/whitespace noise -- across all 6 real
+# target documents, no per-document branching needed).
+#
+# "Ensure access to all logfiles has been configured" was looked at too and
+# dropped: debian_linux_11's real script has no special-case branch for
+# /var/log/apt/*.log or cloud-init.log*/localmessages*/waagent.log*
+# filenames, unlike all 5 other target documents (which relax those files
+# to perm_mask 0133, i.e. world-readable allowed) -- under debian_11 those
+# same files fall through to the stricter default branch (perm_mask 0137,
+# no world access at all). A stock /var/log/apt/*.log ships world-readable
+# (0644) after any apt operation, so the *same real file* would PASS under
+# 5 of the 6 documents' own scripts and FAIL under debian_linux_11's --
+# a genuine per-document condition drift, not cosmetic PDF-extraction
+# noise, the same category that killed the ip-forwarding candidate. Modeling
+# either behavior uniformly across all 6 would invent a result at least one
+# real document's own script doesn't produce, so it's dropped rather than
+# faked.
+
+
+def _evaluate_single_time_sync_daemon(facts: SystemFacts) -> bool:
+    """Real audit (identical logic across all 6 target documents): checks
+    `systemctl is-enabled`/`is-active` for chrony.service and
+    systemd-timesyncd.service and requires exactly one of the two enabled
+    *and* active -- both ("yy") or neither ("nn") FAILs. `systemctl` can't
+    report a real enabled/active state in an unprivileged container without
+    systemd as PID 1 (same structural limit as the Group C candidates in
+    checks-backlog.md, e.g. "Ensure chrony is enabled and running"), so this
+    maps the same "exactly one" condition onto package presence
+    (facts.installed_packages) instead -- the same package-presence
+    substitution already used by the "package X is not in use" family
+    above, just requiring exactly one hit instead of zero.
+    """
+    chrony = "chrony" in facts.installed_packages
+    timesyncd = "systemd-timesyncd" in facts.installed_packages
+    return chrony != timesyncd
+
+
+def _evidence_single_time_sync_daemon(facts: SystemFacts) -> str:
+    chrony = "chrony" in facts.installed_packages
+    timesyncd = "systemd-timesyncd" in facts.installed_packages
+    return (
+        f"installed_packages: chrony={'present' if chrony else 'absent'}, "
+        f"systemd-timesyncd={'present' if timesyncd else 'absent'}"
+    )
+
+
+def _evaluate_audit_processes_prior_to_auditd(facts: SystemFacts) -> bool:
+    """Real audit, identical across all 6 target documents: `find /boot
+    -type f -name 'grub.cfg' -exec grep -Ph -- '^\\h*linux' {} + | grep -v
+    'audit=1'` should return nothing. A container has no
+    /boot/grub/grub.cfg at all (no bootloader) -- `find` matches zero
+    files and the whole pipe naturally produces no output, a legitimate
+    vacuous PASS, same precedent already used by the kernel-module checks
+    (grep against something that doesn't exist correctly reports "nothing
+    to flag").
+    """
+    return facts.boot_grub_audit_text.strip() == ""
+
+
+def _evidence_audit_processes_prior_to_auditd(facts: SystemFacts) -> str:
+    text = facts.boot_grub_audit_text.strip()
+    return f"grub.cfg 'linux' lines missing audit=1: {text or '<none -- no grub.cfg found>'}"
+
+
+# The real audit regex for the pam_pwquality.so half: `^\h*password\h+
+# [^#\n\r]+\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?enforcing=0\b` -- a plain
+# PAM "password ... pam_pwquality.so ... enforcing=0" line. re.search
+# rather than a full-line re.match, since only the offending token matters.
+_PWQUALITY_ENFORCING_ZERO_RE = re.compile(
+    r"^\s*password\s+\S+\s+pam_pwquality\.so\b.*\benforcing=0\b", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _evaluate_pwquality_enforcing(facts: SystemFacts) -> bool:
+    """Real audit (identical across all 6 target documents) is two greps
+    that must both return nothing: `enforcing=0` must not be set in
+    /etc/security/pwquality.conf or /etc/security/pwquality.conf.d/*.conf
+    (`grep -PHsi -- '^\\h*enforcing\\h*=\\h*0\\b' ...`), and the
+    pam_pwquality.so line in /etc/pam.d/common-password must not carry
+    enforcing=0 as an argument either. The secure default is `enforcing`
+    left unset (or 1) in both places -- distinct from the already-
+    implemented "enforce_for_root" check, a different directive.
+    """
+    directives = parse_pwquality_conf(facts.pwquality_text)
+    if directives.get("enforcing") == "0":
+        return False
+    return _PWQUALITY_ENFORCING_ZERO_RE.search(facts.pam_common_password) is None
+
+
+def _evidence_pwquality_enforcing(facts: SystemFacts) -> str:
+    directives = parse_pwquality_conf(facts.pwquality_text)
+    conf_value = directives.get("enforcing", "<not set>")
+    pam_hit = _PWQUALITY_ENFORCING_ZERO_RE.search(facts.pam_common_password) is not None
+    return f"pwquality.conf: enforcing={conf_value}; common-password pam_pwquality.so enforcing=0: {pam_hit}"
+
+
 @dataclass
 class Check:
     """One implemented, hand-written evaluator, plus every title wording
@@ -3739,6 +3837,24 @@ CHECKS = [
         titles=["Ensure root path integrity"],
         evaluate=_evaluate_root_path_integrity,
         evidence=_evidence_root_path_integrity,
+    ),
+    # Group U: see the comment block above these checks' evaluate()/
+    # evidence() functions for the real audit text each matches, and why
+    # "Ensure access to all logfiles has been configured" was dropped.
+    Check(
+        titles=["Ensure a single time synchronization daemon is in use"],
+        evaluate=_evaluate_single_time_sync_daemon,
+        evidence=_evidence_single_time_sync_daemon,
+    ),
+    Check(
+        titles=["Ensure auditing for processes that start prior to auditd is enabled"],
+        evaluate=_evaluate_audit_processes_prior_to_auditd,
+        evidence=_evidence_audit_processes_prior_to_auditd,
+    ),
+    Check(
+        titles=["Ensure password quality checking is enforced"],
+        evaluate=_evaluate_pwquality_enforcing,
+        evidence=_evidence_pwquality_enforcing,
     ),
 ]
 
