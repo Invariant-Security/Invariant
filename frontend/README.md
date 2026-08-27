@@ -1,8 +1,8 @@
-# Invariant quickdemo frontend
+# Invariant demo frontend
 
 A single-page React app (plain JS, no router, no UI/chart library) that
-shows live progress and run history for `./quickdemo.sh` (repo root). It
-talks only to the 3 read-only endpoints under `invariant.api` (see
+shows live progress and run history for `./demo.sh` (repo root). It talks
+only to the 3 read-only endpoints under `invariant.api` (see
 `src/invariant/api/main.py`) -- no direct database access, per this
 project's frontend/API split (see the repo root `CLAUDE.md`).
 
@@ -12,7 +12,7 @@ You need three things running at once, each in its own terminal, from the
 repo root unless noted:
 
 ```bash
-# 1. The API (reads data/quickdemo/status.json + runs.jsonl)
+# 1. The API (reads data/demo/status.json + runs.jsonl)
 uvicorn invariant.api.main:app --reload
 
 # 2. This dev server
@@ -21,15 +21,15 @@ npm install   # first time only
 npm run dev
 
 # 3. The actual demo pipeline
-./quickdemo.sh
+./demo.sh
 ```
 
 Open the URL Vite prints (default `http://localhost:5173`). While
-`quickdemo.sh` step 3-9 runs, the page polls `/api/quickdemo/status` every
-second and shows a step checklist (done/in-progress/pending, with elapsed
-time). Once a run finishes, it shows the FAIL breakdown for all 5 demo
-containers as cards, plus a run history table below (bar-per-run total
-time) built from every past run recorded in `data/quickdemo/runs.jsonl`.
+`demo.sh` step 3-9 runs, the page polls `/api/demo/status` every second and
+shows a step checklist (done/in-progress/pending, with elapsed time). Once
+a run finishes, it shows the FAIL breakdown for all 6 demo containers as
+cards, plus a run history table below (bar-per-run total time) built from
+every past run recorded in `data/demo/runs.jsonl`.
 
 ## Deploying (full remote server running the whole pipeline)
 
@@ -48,9 +48,9 @@ cp .env.example .env.production   # edit VITE_API_BASE
 npm run build                     # writes dist/ -- serve it with any static file server
 ```
 
-`quickdemo.sh` itself is unchanged by any of this -- it still assumes
+`demo.sh` itself is unchanged by any of this -- it still assumes
 Docker/Postgres/the CLI are on the same machine it runs on, so a "full
-remote server" deploy means running `quickdemo.sh`, the API, and this
+remote server" deploy means running `demo.sh`, the API, and this
 frontend's built `dist/` all on that one server.
 
 ## Notes
@@ -59,10 +59,10 @@ frontend's built `dist/` all on that one server.
   `VITE_API_BASE` (see `.env.example`), falling back to that default when
   unset -- right for local dev, override it for a real deploy.
 - The ordered list of the 9 pipeline step names in `src/App.jsx`
-  (`QUICKDEMO_STEPS`) is copied from `quickdemo.sh`'s `section(...)` calls,
-  since the API only reports steps completed so far plus the current one,
-  not the full step list ahead of time. If a step name changes in
-  `quickdemo.sh`, update it here too.
+  (`DEMO_STEPS`) is copied verbatim (Portuguese text included) from
+  `demo.sh`'s `section(...)` calls, since the API only reports steps
+  completed so far plus the current one, not the full step list ahead of
+  time. If a step name changes in `demo.sh`, update it here too.
 - No new npm dependencies beyond the Vite React template's own
   (react/react-dom + Vite/oxlint tooling) -- charts are plain CSS bars,
   not a charting library.

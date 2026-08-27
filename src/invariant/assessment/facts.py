@@ -224,6 +224,20 @@ _TEXT_BLOCKS = [
         "stat -Lc 'mode=%a uid=%u gid=%g gname=%G path=%n' /sbin/auditctl /sbin/aureport "
         "/sbin/ausearch /sbin/auditd /sbin/augenrules 2>&1",
     ),
+    # Best-effort "is this target a container" signal for demo.sh's report
+    # (scripts/demo/report.py) -- not read by any real Check, this tool has
+    # no transport to a target other than `docker exec`, so there's no more
+    # authoritative way to ask (no cloud metadata endpoint, no hypervisor
+    # check). /.dockerenv is Docker's own marker file; /proc/1/cgroup
+    # mentioning a container-runtime path fragment covers Docker/containerd/
+    # Kubernetes even where /.dockerenv is absent (e.g. containerd directly).
+    # See is_running_in_container() below for how this is interpreted.
+    (
+        "container_detection_text",
+        "===CONTAINER_DETECTION===",
+        "test -f /.dockerenv && echo '/.dockerenv:present' || echo '/.dockerenv:absent'; "
+        "cat /proc/1/cgroup 2>&1",
+    ),
 ]
 
 
@@ -299,6 +313,7 @@ class SystemFacts:
     boot_grub_audit_text: str = ""
     interactive_user_files_text: str = ""
     audit_conf_text: str = ""
+    container_detection_text: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -428,6 +443,7 @@ def _parse_collect_output(output: str) -> SystemFacts:
         boot_grub_audit_text=text_values["boot_grub_audit_text"],
         interactive_user_files_text=text_values["interactive_user_files_text"],
         audit_conf_text=text_values["audit_conf_text"],
+        container_detection_text=text_values["container_detection_text"],
     )
 
 
@@ -443,3 +459,27 @@ def collect_facts(target: str) -> SystemFacts:
         timeout=10,
     )
     return _parse_collect_output(result.stdout + result.stderr)
+
+
+_CONTAINER_CGROUP_MARKERS = ("docker", "containerd", "kubepods")
+
+
+def is_running_in_container(facts: SystemFacts) -> bool:
+    """Best-effort "is this target a container" signal, used only by
+    demo.sh's report (scripts/demo/report.py) to decide whether a FAIL on a
+    container-impossible title (no bootloader, no functioning systemd/
+    journald, audit subsystem often not fully functional without extra
+    capabilities) is an environment limitation or a real gap -- on a
+    bare-metal/VM target the same title is just a normal FAIL, no automatic
+    excuse. Not used by any real Check or by assess_target() itself.
+
+    True if /.dockerenv exists (Docker's own marker file) or /proc/1/cgroup
+    mentions a known container-runtime path fragment (covers containerd/
+    Kubernetes even where /.dockerenv is absent). A false negative here just
+    means a demo report treats a FAIL as a real gap instead of an
+    environment limitation -- fails closed, not open.
+    """
+    first_line, _, cgroup_text = facts.container_detection_text.partition("\n")
+    if first_line.strip() == "/.dockerenv:present":
+        return True
+    return any(marker in cgroup_text for marker in _CONTAINER_CGROUP_MARKERS)
