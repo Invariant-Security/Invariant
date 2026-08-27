@@ -1,6 +1,7 @@
 """Turns a raw artifact into structured extracted items."""
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,6 +72,82 @@ class ExtractedRecommendation:
     rationale: str
     audit: str
     remediation: str
+
+
+class ExtractionError(Exception):
+    """Raised when a document's extraction fails the fail-closed contract
+    (PRD sec. 47, the reproducibility invariant; codexplan.md Fase 2): never
+    persist a result that looks like success but silently dropped or
+    misidentified content. Callers must not catch this to fall back to a
+    partial/best-effort persist -- the document should just fail, visibly.
+    """
+
+
+@dataclass
+class ExtractionWarning:
+    """A non-fatal data-quality note about one recommendation -- reported,
+    never silently dropped, but doesn't fail the document."""
+
+    external_id: str
+    field: str
+    detail: str
+
+
+@dataclass
+class ExtractionResult:
+    recommendations: list[ExtractedRecommendation]
+    warnings: list[ExtractionWarning]
+
+
+# Empty in 0 of 235-389 recommendations across all 18 real CIS Debian/Ubuntu
+# PDFs characterized so far (see docs/decisions/cis-parser-characterization.md
+# and docs/cis_characterization_report.json) -- treated as a hard failure,
+# not normalized away, per codexplan.md Fase 2's required-field list.
+_HARD_REQUIRED_FIELDS = ("external_id", "title", "description", "audit", "remediation")
+
+# Legitimately empty in a handful of items in real, newer-vocabulary CIS
+# documents (same characterization report) -- a data fact about the source,
+# not an extraction bug, so it's a warning, not a failure.
+_SOFT_REQUIRED_FIELDS = ("rationale",)
+
+
+def extract_and_validate(pdf_path: Path) -> ExtractionResult:
+    """extract_all_recommendations() plus the fail-closed contract.
+
+    Raises ExtractionError when:
+    - no recommendations were found at all (also covers "format could not be
+      identified" -- if the header/anchor pattern never matches, this is
+      exactly what happens);
+    - any external_id is duplicated;
+    - any hard-required field is empty for some recommendation.
+
+    Does not check for a count regression against a previous document
+    version -- that requires document history, which lives in the database,
+    not here (see invariant.cli.extract for that check).
+    """
+    recommendations = extract_all_recommendations(pdf_path)
+
+    if not recommendations:
+        raise ExtractionError(f"no recommendations found in {pdf_path}")
+
+    ids = Counter(r.external_id for r in recommendations)
+    duplicates = sorted(external_id for external_id, count in ids.items() if count > 1)
+    if duplicates:
+        raise ExtractionError(f"duplicate external_id(s) in {pdf_path}: {duplicates}")
+
+    warnings = []
+    for rec in recommendations:
+        for field in _HARD_REQUIRED_FIELDS:
+            if not getattr(rec, field):
+                raise ExtractionError(
+                    f"{pdf_path}: recommendation {rec.external_id!r} has empty "
+                    f"required field {field!r}"
+                )
+        for field in _SOFT_REQUIRED_FIELDS:
+            if not getattr(rec, field):
+                warnings.append(ExtractionWarning(rec.external_id, field, "empty"))
+
+    return ExtractionResult(recommendations=recommendations, warnings=warnings)
 
 
 def extract_recommendation(pdf_path: Path, external_id: str) -> ExtractedRecommendation:
