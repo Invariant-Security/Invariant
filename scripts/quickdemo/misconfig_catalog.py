@@ -89,6 +89,32 @@ STRUCTURAL_GAP_TITLES = frozenset(
         "Ensure journald Storage is configured",
         "Ensure journald log file rotation is configured",
         "Ensure access to bootloader config is configured",
+        # Round 3: neither hardened image configures /etc/pam.d/su's
+        # pam_wheel.so line or faillock.conf's even_deny_root/
+        # root_unlock_time -- same "never hardened for it" story as the
+        # rest of this set. Confirmed via assess_target() against both
+        # live demo images, same as everything else here.
+        "Ensure access to the su command is restricted",
+        "Ensure password failed attempts lockout includes root account",
+        # Round 4: neither image installs chrony/systemd-timesyncd, sets
+        # any real auditd.conf directive beyond the shipped package
+        # defaults, or loads a single real audit rule -- confirmed via
+        # assess_target() against both live demo images. The 8 audit-rule-
+        # collection titles all fail closed on an empty /etc/audit/rules.d;
+        # the 3 auditd.conf ones fail because the package's own shipped
+        # defaults (ROTATE/SUSPEND/SYSLOG) don't meet CIS's required values.
+        "Ensure a single time synchronization daemon is in use",
+        "Ensure audit logs are not automatically deleted",
+        "Ensure system is disabled when audit logs are full",
+        "Ensure system warns when audit logs are low on space",
+        "Ensure actions as another user are always logged",
+        "Ensure events that modify date and time information are collected",
+        "Ensure events that modify the sudo log file are collected",
+        "Ensure events that modify the system's Mandatory Access Controls are collected",
+        "Ensure login and logout events are collected",
+        "Ensure session initiation information is collected",
+        "Ensure successful file system mounts are collected",
+        "Ensure unsuccessful file access attempts are collected",
     }
 )
 
@@ -112,9 +138,13 @@ RECIPES: list[Recipe] = [
     Recipe(
         id="passwd-world-writable",
         distro="any",
+        # Same "mode 666 also trips round 3's world-writable scan" reason
+        # as ssh-public-host-key-wrong-owner/shells-world-writable above,
+        # confirmed empirically.
         check_titles=(
             "Ensure access to /etc/passwd is configured",
             "Ensure permissions on /etc/passwd are configured",
+            "Ensure world writable files and directories are secured",
         ),
         document=_BOTH_DOCS,
         description="/etc/passwd loosened to 666 (world-writable account database)",
@@ -126,6 +156,7 @@ RECIPES: list[Recipe] = [
         check_titles=(
             "Ensure access to /etc/group is configured",
             "Ensure permissions on /etc/group are configured",
+            "Ensure world writable files and directories are secured",
         ),
         document=_BOTH_DOCS,
         description="/etc/group loosened to 666 (world-writable group database)",
@@ -167,9 +198,14 @@ RECIPES: list[Recipe] = [
     Recipe(
         id="ssh-public-host-key-wrong-owner",
         distro="any",
+        # Round 3's full-filesystem world-writable scan also flags this
+        # file for the same reason -- mode 666 sets the "other" write bit,
+        # exactly what that check looks for -- confirmed empirically; not
+        # a second, unrelated gap.
         check_titles=(
             "Ensure permissions on SSH public host key files are configured",
             "Ensure access to SSH public host key files is configured",
+            "Ensure world writable files and directories are secured",
         ),
         document=_BOTH_DOCS,
         description="SSH public host key (RSA) mode loosened past 644",
@@ -178,9 +214,13 @@ RECIPES: list[Recipe] = [
     Recipe(
         id="shells-world-writable",
         distro="any",
+        # Same reasoning as ssh-public-host-key-wrong-owner above -- mode
+        # 666 also trips round 3's world-writable scan, confirmed
+        # empirically.
         check_titles=(
             "Ensure access to /etc/shells is configured",
             "Ensure permissions on /etc/shells are configured",
+            "Ensure world writable files and directories are secured",
         ),
         document=_BOTH_DOCS,
         description="/etc/shells loosened to 666 (world-writable allowed-shells list)",
@@ -189,9 +229,13 @@ RECIPES: list[Recipe] = [
     Recipe(
         id="cron-d-world-writable",
         distro="any",
+        # 777 on a *directory* also trips round 3's world-writable scan
+        # (it flags both files and directories with the "other" write
+        # bit set), confirmed empirically.
         check_titles=(
             "Ensure access to /etc/cron.d is configured",
             "Ensure permissions on /etc/cron.d are configured",
+            "Ensure world writable files and directories are secured",
         ),
         document=_BOTH_DOCS,
         description="/etc/cron.d loosened to 777 (world-writable cron drop-in directory)",
@@ -214,6 +258,7 @@ RECIPES: list[Recipe] = [
         check_titles=(
             "Ensure access to /etc/issue.net is configured",
             "Ensure permissions on /etc/issue.net are configured",
+            "Ensure world writable files and directories are secured",
         ),
         document=_BOTH_DOCS,
         description="/etc/issue.net loosened to 666 (world-writable pre-login SSH banner)",
@@ -222,7 +267,10 @@ RECIPES: list[Recipe] = [
     Recipe(
         id="motd-world-writable",
         distro="any",
-        check_titles=("Ensure access to /etc/motd is configured",),
+        check_titles=(
+            "Ensure access to /etc/motd is configured",
+            "Ensure world writable files and directories are secured",
+        ),
         document=_BOTH_DOCS,
         description="/etc/motd loosened to 666 (world-writable message-of-the-day)",
         commands=("chmod 666 /etc/motd",),
@@ -528,7 +576,15 @@ RECIPES: list[Recipe] = [
     Recipe(
         id="extra-gid0-account",
         distro="any",
-        check_titles=("Ensure root is the only GID 0 account",),
+        check_titles=(
+            "Ensure root is the only GID 0 account",
+            # A real login shell (see the comment below on why it can't be
+            # nologin) now also sweeps this account into round 4's "local
+            # interactive user" scope, and its /nonexistent home doesn't
+            # exist -- a real, explained consequence of the same command,
+            # confirmed empirically, not a separate bug.
+            "Ensure local interactive user home directories are configured",
+        ),
         document=_BOTH_DOCS,
         description="a second GID-0 primary group account (evilgroupuser) added to /etc/passwd",
         # Shell is /bin/bash (a valid login shell), not /usr/sbin/nologin --
@@ -553,9 +609,21 @@ RECIPES: list[Recipe] = [
         # genuinely broken by this one command -- not a title-alias
         # situation like the ssh-max-sessions recipe below, an actually
         # different control that happens to share the same root cause.
+        #
+        # Found a third the same way after round 4's dot-files check: GID
+        # 0's name resolution (facts's `_gid_to_group_name`, one name per
+        # GID) picks whichever group *last* in /etc/group claims GID 0 --
+        # "evilgroup", appended after "root" -- so root's own real,
+        # unmodified, correctly-root-owned dotfiles then compare against
+        # the wrong expected group name and FAIL. Not a bug in the dot-
+        # files check: a real audit script resolving a GID to a name (e.g.
+        # `getent group 0`) hits the exact same ambiguity once two groups
+        # share GID 0 -- this recipe genuinely does make root's own group
+        # ownership ambiguous, not just root-group's count.
         check_titles=(
             "Ensure group root is the only GID 0 group",
             "Ensure no duplicate GIDs exist",
+            "Ensure local interactive user dot files access is configured",
         ),
         document=_BOTH_DOCS,
         description="a second group (evilgroup) added to /etc/group with GID 0",
@@ -587,8 +655,15 @@ RECIPES: list[Recipe] = [
         # without a valid login shell are locked" (no matching shadow lock
         # entry); UID 1002 is above UID_MIN, so a real shell doesn't
         # introduce any new interaction, and is arguably more realistic
-        # for a genuinely legacy, still-logged-into account anyway.
+        # for a genuinely legacy, still-logged-into account anyway. The
+        # real shell now also sweeps this account into round 4's "local
+        # interactive user" scope -- given a real, compliant home
+        # directory (owned by legacyuser, mode 750) instead of a
+        # /nonexistent-style path, so it doesn't also trip "Ensure local
+        # interactive user home directories are configured" as an
+        # unrelated second FAIL; confirmed empirically.
         commands=(
+            "mkdir -p /home/legacyuser && chown 1002:33 /home/legacyuser && chmod 750 /home/legacyuser && "
             "sh -c \"echo 'legacyuser:"
             "\\$1\\$deadbeef\\$notarealhash:1002:33::/home/legacyuser:/bin/bash' >> /etc/passwd\"",
         ),
@@ -659,9 +734,25 @@ RECIPES: list[Recipe] = [
         # a *referenced* primary group here doesn't itself create a
         # duplicate /etc/group entry (only /etc/group's own GID column
         # feeds that check).
+        #
+        # Shell is /usr/sbin/nologin (not /bin/bash, unlike an earlier
+        # version) with a locked shadow entry, not a bare /nonexistent
+        # home + real shell: a real shell in /etc/shells now sweeps an
+        # account into round 4's "local interactive user" definition,
+        # which would silently fail "Ensure local interactive user home
+        # directories are configured" against a /nonexistent home (a
+        # second, unrelated FAIL neither this recipe nor its check_titles
+        # mention) -- same class of shared-UID gotcha this recipe's own
+        # comment already documents for the primary-group choice above.
+        # nologin instead requires a locked shadow entry to avoid tripping
+        # "Ensure accounts without a valid login shell are locked"
+        # instead -- confirmed empirically against a live container that
+        # this combination trips only "Ensure no duplicate UIDs exist".
         commands=(
-            "printf 'fakedupuid1:x:1500:33::/nonexistent:/bin/bash\\n"
-            "fakedupuid2:x:1500:33::/nonexistent:/bin/bash\\n' >> /etc/passwd",
+            "printf 'fakedupuid1:x:1500:33::/nonexistent:/usr/sbin/nologin\\n"
+            "fakedupuid2:x:1500:33::/nonexistent:/usr/sbin/nologin\\n' >> /etc/passwd && "
+            "printf 'fakedupuid1:!:19000:0:99999:7:::\\n"
+            "fakedupuid2:!:19000:0:99999:7:::\\n' >> /etc/shadow",
         ),
     ),
     Recipe(

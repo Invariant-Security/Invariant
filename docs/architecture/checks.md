@@ -82,12 +82,13 @@ to **PASS every `Check` that's achievable without a systemd-capable image
 or real separate filesystem mounts.**
 
 Confirmed empirically (built and assessed against live containers): of the
-122 `CHECKS`, exactly **111 pass** on both hardened images with zero
-further changes, and the same **11 fail structurally** on both, regardless
-of configuration -- because the underlying package/file simply isn't
-present (or, for the one exception, isn't actually loaded), and installing
-what's left would mean either a systemd-capable base image or real
-partition mounts, both bigger changes than "add a package":
+165 `CHECKS`, exactly **140 pass** on both hardened images with zero
+further changes, and the same **25 fail structurally** on both, regardless
+of configuration -- because the underlying package/file/rule simply isn't
+present or loaded, and installing what's left would mean either a
+systemd-capable base image, real partition mounts, or actually configuring
+and loading a real auditd rule set, all bigger changes than "add a
+package":
 
 | Check title | Why it's structural |
 |---|---|
@@ -102,13 +103,28 @@ partition mounts, both bigger changes than "add a package":
 | Ensure journald Storage is configured | same |
 | Ensure journald log file rotation is configured | same |
 | Ensure access to bootloader config is configured | `/boot/grub/grub.cfg` never exists in a container (no bootloader) |
+| Ensure access to the su command is restricted | round 3 -- neither image configures `/etc/pam.d/su`'s `pam_wheel.so` line |
+| Ensure password failed attempts lockout includes root account | round 3 -- neither image sets `even_deny_root`/`root_unlock_time` in `faillock.conf` |
+| Ensure a single time synchronization daemon is in use | round 4 -- neither `chrony` nor `systemd-timesyncd` is installed on either image |
+| Ensure audit logs are not automatically deleted | round 4 -- `auditd.conf`'s shipped default (`max_log_file_action ROTATE`) doesn't meet CIS's required `keep_logs` |
+| Ensure system is disabled when audit logs are full | round 4 -- shipped default (`disk_full_action SUSPEND`) isn't `halt`/`single` |
+| Ensure system warns when audit logs are low on space | round 4 -- shipped default (`space_left_action SYSLOG`) isn't in the required set |
+| Ensure actions as another user are always logged | round 4 -- no real auditd rule loaded on either image (all 8 rows below share this one root cause) |
+| Ensure events that modify date and time information are collected | round 4, same root cause as above |
+| Ensure events that modify the sudo log file are collected | round 4, same root cause (also downstream of "Ensure sudo log file exists" above) |
+| Ensure events that modify the system's Mandatory Access Controls are collected | round 4, same root cause |
+| Ensure login and logout events are collected | round 4, same root cause |
+| Ensure session initiation information is collected | round 4, same root cause |
+| Ensure successful file system mounts are collected | round 4, same root cause |
+| Ensure unsuccessful file access attempts are collected | round 4, same root cause |
 
 (`Ensure ufw is installed`, `Ensure sudo is installed`, `Ensure AIDE is
-installed`, and the ~19 "package X is not in use" checks round 2 added are
-all demo-eligible and PASS today -- either the package genuinely is
-installed now, or genuinely isn't and the check wants it absent.)
+installed`, the ~19 "package X is not in use" checks round 2 added, the 7
+of 10 auditd.conf-family checks round 4 added whose shipped defaults
+already comply, and the 2 local-interactive-user checks round 4 added are
+all demo-eligible and PASS today.)
 
-This 11-title set is `scripts/quickdemo/misconfig_catalog.py`'s
+This 25-title set is `scripts/quickdemo/misconfig_catalog.py`'s
 `STRUCTURAL_GAP_TITLES` constant. `quickdemo.sh`'s final summary uses it to
 split every FAIL on a demo container into:
 
