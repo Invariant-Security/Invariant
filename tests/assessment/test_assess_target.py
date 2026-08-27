@@ -236,6 +236,67 @@ _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT = {
     "ubuntu_linux_24_04": {"5.1.15", "5.1.17"},
 }
 
+# Round 4 (auditd.conf family + audit rule collection + single time-sync
+# daemon): 16 of the 23 newly-added checks fail on all 6 live containers,
+# same "package/rule never configured for it" story as the rest of this
+# file -- confirmed via assess_target() against all 6, not guessed. None of
+# the 6 Dockerfiles install chrony or systemd-timesyncd explicitly (the
+# single-time-sync-daemon check wants exactly one, neither counts as a
+# fail, external_id "2.3.1.1" on every document), configure any real
+# auditd.conf directive beyond its shipped defaults (7 of the 10 auditd.conf-
+# family checks already pass on the untouched defaults; the other 3 --
+# storage size, not-auto-deleted, disabled/warns-on-full -- and the log
+# file/dir/tools mode checks fail because the shipped defaults don't meet
+# CIS's stricter modes/values), or load any real audit rule (all 8
+# audit-rule-collection checks fail closed on an empty audit.rules). Same
+# per-document numbering drift as _AUDIT_FILES_GAP_BY_DOCUMENT above
+# (this whole family lives in the same 6.x audit section), looked up by
+# document for the same collision-safety reason.
+_ROUND4_GAP_BY_DOCUMENT = {
+    "debian_linux_11": {
+        "2.3.1.1",
+        "6.4.2.1", "6.4.2.2", "6.4.2.3", "6.4.2.4",
+        "6.4.3.2", "6.4.3.3", "6.4.3.4", "6.4.3.7",
+        "6.4.3.10", "6.4.3.11", "6.4.3.12", "6.4.3.14",
+        "6.4.4.1", "6.4.4.4", "6.4.4.8",
+    },
+    "debian_linux_12": {
+        "2.3.1.1",
+        "6.2.2.1", "6.2.2.2", "6.2.2.3", "6.2.2.4",
+        "6.2.3.2", "6.2.3.3", "6.2.3.4", "6.2.3.17",
+        "6.2.3.19", "6.2.3.20", "6.2.3.21", "6.2.3.23",
+        "6.2.4.1", "6.2.4.2", "6.2.4.8",
+    },
+    "debian_linux_13": {
+        "2.3.1.1",
+        "6.2.2.1", "6.2.2.2", "6.2.2.3", "6.2.2.4",
+        "6.2.3.2", "6.2.3.3", "6.2.3.4", "6.2.3.11",
+        "6.2.3.21", "6.2.3.22", "6.2.3.23", "6.2.3.26",
+        "6.2.4.1", "6.2.4.4", "6.2.4.8",
+    },
+    "ubuntu_linux_20_04": {
+        "2.3.1.1",
+        "6.3.2.1", "6.3.2.2", "6.3.2.3", "6.3.2.4",
+        "6.3.3.2", "6.3.3.3", "6.3.3.4", "6.3.3.7",
+        "6.3.3.10", "6.3.3.11", "6.3.3.12", "6.3.3.14",
+        "6.3.4.1", "6.3.4.4", "6.3.4.8",
+    },
+    "ubuntu_linux_22_04": {
+        "2.3.1.1",
+        "6.2.2.1", "6.2.2.2", "6.2.2.3", "6.2.2.4",
+        "6.2.3.2", "6.2.3.3", "6.2.3.4", "6.2.3.7",
+        "6.2.3.10", "6.2.3.11", "6.2.3.12", "6.2.3.14",
+        "6.2.4.1", "6.2.4.4", "6.2.4.8",
+    },
+    "ubuntu_linux_24_04": {
+        "2.3.1.1",
+        "6.2.2.1", "6.2.2.2", "6.2.2.3", "6.2.2.4",
+        "6.2.3.2", "6.2.3.3", "6.2.3.4", "6.2.3.17",
+        "6.2.3.19", "6.2.3.20", "6.2.3.21", "6.2.3.23",
+        "6.2.4.1", "6.2.4.2", "6.2.4.8",
+    },
+}
+
 
 def test_assess_debian_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-debian-baseline")
@@ -251,7 +312,8 @@ def test_assess_debian_baseline_fails_only_sshd_config_permissions():
         | {"2.4.1.7", "6.2.1.1.3", "6.2.1.1.5", "6.2.1.1.6"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_11"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_11"]
-        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_11"],
+        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_11"]
+        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_11"],
     )
 
 
@@ -266,7 +328,8 @@ def test_assess_debian_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
         | {"5.1.20", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_12"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_12"]
-        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_12"],
+        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_12"]
+        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_12"],
     )
 
 
@@ -281,7 +344,8 @@ def test_assess_debian_permissions_bad_fails_only_shadow_and_sshd_config_permiss
         | {"7.1.5", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_13"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_13"]
-        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_13"],
+        | _ROUND2_GAP_BY_DOCUMENT["debian_linux_13"]
+        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_13"],
     )
 
 
@@ -298,7 +362,8 @@ def test_assess_ubuntu_baseline_fails_only_sshd_config_permissions():
         | {"4.2.1", "6.2.1.3", "6.2.2.3", "6.2.2.4"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
-        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
+        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
+        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
     )
 
 
@@ -313,7 +378,8 @@ def test_assess_ubuntu_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
         | {"5.1.20", "6.1.1.1.3", "6.1.1.1.5", "6.1.1.1.6"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
-        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_22_04"],
+        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
+        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_22_04"],
     )
 
 
@@ -328,7 +394,8 @@ def test_assess_ubuntu_permissions_bad_fails_only_shadow_and_sshd_config_permiss
         | {"7.1.5", "6.1.1.1.5", "6.1.1.1.6", "6.1.1.1.7"}
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
-        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_24_04"],
+        | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
+        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_24_04"],
     )
 
 
