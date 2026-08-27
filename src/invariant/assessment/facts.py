@@ -60,6 +60,19 @@ _MARKER_OS_RELEASE = "===OS_RELEASE==="
 _MARKER_SSHD_CONFIG = "===SSHD_CONFIG==="
 _MARKER_STAT_PREFIX = "===STAT:"
 
+# Enumerates every /etc/passwd account's home directory + the dotfiles
+# directly inside it, in one pass -- backs the "local interactive user home
+# directories"/"dot files access" checks, which need per-user dynamic paths
+# _STAT_PATHS can't express (that list is fixed). Deliberately does *not*
+# pre-filter to "interactive" users here (that needs /etc/shells, already
+# its own text block) -- it just stats every account's home and lets
+# assessment/__init__.py's _local_interactive_users() decide which rows are
+# relevant, same "collect broadly, filter in evaluate()" split as the rest
+# of this module. A home directory that doesn't exist (`[ -d "$h" ]` false)
+# simply emits no HOME line for that user -- evaluate() treats a missing
+# entry as "home doesn't exist", it's not a collection error.
+_INTERACTIVE_USER_FILES_CMD = """awk -F: '{print $1, $6}' /etc/passwd | while read -r u h; do [ -n "$h" ] && [ -d "$h" ] || continue; stat -Lc "HOME $u %U %G %a $h" "$h"; find "$h" -maxdepth 1 -type f -name '.*' 2>/dev/null | while read -r f; do stat -Lc "DOT $u %U %G %a $(basename "$f")" "$f"; done; done"""
+
 # (SystemFacts attribute name, output marker, shell command). Read as plain
 # text -- each check does its own parsing/grepping over the raw content,
 # same as sshd_config was before it got a dedicated parser. A file that
@@ -171,6 +184,7 @@ _TEXT_BLOCKS = [
         "===BOOT_GRUB_AUDIT===",
         r"find /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} + 2>/dev/null | grep -v 'audit=1' 2>&1",
     ),
+    ("interactive_user_files_text", "===INTERACTIVE_USER_FILES===", _INTERACTIVE_USER_FILES_CMD),
 ]
 
 
@@ -244,6 +258,7 @@ class SystemFacts:
     unowned_text: str = ""
     root_path_probe_text: str = ""
     boot_grub_audit_text: str = ""
+    interactive_user_files_text: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -371,6 +386,7 @@ def _parse_collect_output(output: str) -> SystemFacts:
         unowned_text=text_values["unowned_text"],
         root_path_probe_text=text_values["root_path_probe_text"],
         boot_grub_audit_text=text_values["boot_grub_audit_text"],
+        interactive_user_files_text=text_values["interactive_user_files_text"],
     )
 
 
