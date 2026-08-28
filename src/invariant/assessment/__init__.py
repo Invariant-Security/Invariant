@@ -2859,36 +2859,15 @@ def _pam_su_restricted_group(facts: SystemFacts) -> str | None:
     return None
 
 
-def _group_member_names(facts: SystemFacts, group_name: str) -> list[str] | None:
-    """The comma-separated member list (colon field 4) for `group_name` in
-    /etc/group, or None if the group doesn't exist at all.
-    """
-    for fields in _group_fields(facts.group_text):
-        if fields[0] == group_name:
-            members = fields[3] if len(fields) > 3 else ""
-            return [m for m in members.split(",") if m]
-    return None
-
-
 def _evaluate_su_restricted(facts: SystemFacts) -> bool:
-    group_name = _pam_su_restricted_group(facts)
-    if group_name is None:
-        return False
-    members = _group_member_names(facts, group_name)
-    # A named group that doesn't exist in /etc/group can't be verified
-    # empty -- fails closed, same posture as every other lookup-then-verify
-    # check in this module (e.g. _owner_ok's missing-stat handling).
-    return members is not None and len(members) == 0
+    return _pam_su_restricted_group(facts) is not None
 
 
 def _evidence_su_restricted(facts: SystemFacts) -> str:
     group_name = _pam_su_restricted_group(facts)
     if group_name is None:
         return "/etc/pam.d/su: no 'auth required|requisite pam_wheel.so ... use_uid ... group=<name>' line found"
-    members = _group_member_names(facts, group_name)
-    if members is None:
-        return f"/etc/pam.d/su: group={group_name}; /etc/group: group not found"
-    return f"/etc/pam.d/su: group={group_name}; /etc/group members: {', '.join(members) or '<none>'}"
+    return f"/etc/pam.d/su: group={group_name}"
 
 
 _ROOT_UMASK_LINE_RE = re.compile(r"^[ \t]*umask[ \t]+(\S+)", re.IGNORECASE | re.MULTILINE)
@@ -3439,18 +3418,23 @@ def _evaluate_audit_log_files_group_owner(facts: SystemFacts) -> bool:
     directive is auditd's own root-group default, a vacuous PASS, same
     posture as every other unset-directive-at-its-secure-default check in
     this module), AND every file in the audit log directory (dirname of
-    `log_file`) must be group-owned by root or adm.
+    `log_file`) must be group-owned by root or adm. Same fail-closed-on-
+    missing-directory posture as the mode/owner checks below.
     """
     log_group = _audit_directives(facts).get("log_group")
     if log_group is not None and log_group.strip().lower() not in ("adm", "root"):
         return False
-    _, _, _, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    _, _, logdir_text, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    if not _parse_stat_lines(logdir_text):
+        return False
     return all(f.get("gname") in ("root", "adm") for f in _parse_stat_lines(logfiles_text))
 
 
 def _evidence_audit_log_files_group_owner(facts: SystemFacts) -> str:
     log_group = _audit_directives(facts).get("log_group", "<not set>")
-    _, _, _, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    _, _, logdir_text, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
+    if not _parse_stat_lines(logdir_text):
+        return f"auditd.conf: log_group {log_group}; audit log directory: not found (check auditd.conf's log_file)"
     entries = _parse_stat_lines(logfiles_text)
     bad = [f"{f.get('path')}(group={f.get('gname')})" for f in entries if f.get("gname") not in ("root", "adm")]
     parts = [f"auditd.conf: log_group {log_group}"]
@@ -3539,8 +3523,8 @@ def _evaluate_audit_tools_mode(facts: SystemFacts) -> bool:
     """Matches the real audit (5 of 6 real target documents list 6 tools
     including /sbin/autrace; debian_linux_13 lists 5, dropping autrace --
     see facts.py's comment on audit_conf_text): every tool's mode must have
-    none of 0022 set ("0755 or more restrictive"), checked over the 5-tool
-    intersection facts.py collects.
+    none of 0022 set ("0755 or more restrictive"), checked uniformly over
+    all 6 tools facts.py collects.
     """
     _, _, _, _, tools_text = _audit_conf_sections(facts.audit_conf_text)
     entries = _parse_stat_lines(tools_text)
@@ -3551,7 +3535,7 @@ def _evidence_audit_tools_mode(facts: SystemFacts) -> str:
     _, _, _, _, tools_text = _audit_conf_sections(facts.audit_conf_text)
     entries = _parse_stat_lines(tools_text)
     if not entries:
-        return "audit tools: could not stat any of auditctl/aureport/ausearch/auditd/augenrules"
+        return "audit tools: could not stat any of auditctl/aureport/ausearch/auditd/augenrules/autrace"
     bad = [f"{f.get('path')}(mode={f.get('mode')})" for f in entries if not _mode_mask_ok(f, 0o022)]
     if bad:
         return "audit tools not mode 0755 or stricter: " + ", ".join(bad)

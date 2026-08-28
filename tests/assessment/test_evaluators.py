@@ -4,7 +4,9 @@ from invariant.assessment import (
     _evaluate_audit_config_files_group_owner,
     _evaluate_audit_config_files_owner,
     _evaluate_audit_config_immutable,
+    _evaluate_audit_log_files_group_owner,
     _evaluate_audit_tools_group_owner,
+    _evaluate_audit_tools_mode,
     _evaluate_audit_tools_owner,
     _evaluate_bootloader_config_permissions,
     _evaluate_cron_d_permissions,
@@ -74,6 +76,7 @@ from invariant.assessment import (
     _evaluate_ssh_use_pam,
     _evaluate_sshd_config_permissions,
     _evaluate_strong_password_hashing_algorithm,
+    _evaluate_su_restricted,
     _evaluate_sudo_log_file_exists,
     _evaluate_sudo_no_nopasswd,
     _evaluate_sudo_reauthentication_required,
@@ -104,6 +107,8 @@ def _facts(
     shells_text="",
     rsyslog_text="",
     journald_text="",
+    pam_su_text="",
+    audit_conf_text="",
     os_id="debian",
     os_version_id="11",
 ) -> SystemFacts:
@@ -130,6 +135,8 @@ def _facts(
         shells_text=shells_text,
         rsyslog_text=rsyslog_text,
         journald_text=journald_text,
+        pam_su_text=pam_su_text,
+        audit_conf_text=audit_conf_text,
     )
 
 
@@ -1465,3 +1472,60 @@ def test_pam_pwhistory_use_authtok_evaluator_fails_when_absent_from_both():
 
 def test_pam_pwhistory_use_authtok_evaluator_fails_when_pwhistory_not_configured():
     assert _evaluate_pam_pwhistory_use_authtok(_facts()) is False
+
+
+def test_su_restricted_evaluator_passes_with_nonempty_group():
+    """Regression: the real CIS audit only checks the pam_wheel.so line
+    exists -- it never inspects /etc/group membership, so a group with real
+    members (the normal, intended way to authorize specific admins to su)
+    must pass, not fail."""
+    facts = _facts(
+        pam_su_text="auth required pam_wheel.so use_uid group=wheel\n",
+        group_text="wheel:x:10:alice,bob\n",
+    )
+    assert _evaluate_su_restricted(facts) is True
+
+
+def test_su_restricted_evaluator_fails_when_line_missing():
+    assert _evaluate_su_restricted(_facts()) is False
+
+
+_AUDIT_CONF_MARKERS = "---CONFFILES---\n---LOGDIR---\n{logdir}---LOGFILES---\n{logfiles}---TOOLS---\n{tools}"
+
+
+def test_audit_log_files_group_owner_evaluator_fails_when_logdir_missing():
+    """Regression: without the fail-closed guard, all(... for f in []) is
+    vacuously True -- a missing audit log directory must FAIL, matching the
+    mode/owner sibling checks' posture."""
+    audit_conf_text = "log_group = adm\n" + _AUDIT_CONF_MARKERS.format(
+        logdir="LOGDIR_NOT_FOUND\n", logfiles="", tools=""
+    )
+    facts = _facts(audit_conf_text=audit_conf_text)
+    assert _evaluate_audit_log_files_group_owner(facts) is False
+
+
+def test_audit_log_files_group_owner_evaluator_passes_when_files_group_root_or_adm():
+    audit_conf_text = "log_group = adm\n" + _AUDIT_CONF_MARKERS.format(
+        logdir="mode=750 uid=0 gid=0 gname=root path=/var/log/audit\n",
+        logfiles="mode=640 uid=0 gid=0 gname=root path=/var/log/audit/audit.log\n",
+        tools="",
+    )
+    facts = _facts(audit_conf_text=audit_conf_text)
+    assert _evaluate_audit_log_files_group_owner(facts) is True
+
+
+def test_audit_tools_mode_evaluator_covers_autrace():
+    """Regression: /sbin/autrace must actually be read, not just present in
+    the shell command -- a bad-mode autrace line alone should fail the
+    check even though the other 5 tools are fine."""
+    tools = (
+        "mode=755 uid=0 gid=0 gname=root path=/sbin/auditctl\n"
+        "mode=755 uid=0 gid=0 gname=root path=/sbin/aureport\n"
+        "mode=755 uid=0 gid=0 gname=root path=/sbin/ausearch\n"
+        "mode=755 uid=0 gid=0 gname=root path=/sbin/auditd\n"
+        "mode=755 uid=0 gid=0 gname=root path=/sbin/augenrules\n"
+        "mode=777 uid=0 gid=0 gname=root path=/sbin/autrace\n"
+    )
+    audit_conf_text = _AUDIT_CONF_MARKERS.format(logdir="", logfiles="", tools=tools)
+    facts = _facts(audit_conf_text=audit_conf_text)
+    assert _evaluate_audit_tools_mode(facts) is False

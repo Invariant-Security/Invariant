@@ -118,3 +118,14 @@ def test_is_running_in_container_false_on_bare_metal():
         _build_full_output({"container_detection_text": "/.dockerenv:absent\n0::/"})
     )
     assert is_running_in_container(facts) is False
+
+
+def test_audit_conf_text_stat_command_includes_all_six_audit_tools():
+    """Regression: the stat command must check /sbin/autrace alongside the
+    other 5 audit tools -- checking one extra binary's mode is a harmless
+    superset (missing means no entry, see _parse_stat_lines), and fixes a
+    genuine under-check on the 5 of 6 real target documents that do require
+    it."""
+    (_, _, cmd), = [block for block in _TEXT_BLOCKS if block[0] == "audit_conf_text"]
+    for tool in ("auditctl", "aureport", "ausearch", "auditd", "augenrules", "autrace"):
+        assert f"/sbin/{tool}" in cmd

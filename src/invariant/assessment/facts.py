@@ -195,17 +195,16 @@ _TEXT_BLOCKS = [
     # 4 sections separated by their own markers (same "one text field, self-
     # parsed sub-markers" shape as kernel_modules_text above).
     #
-    # The tool list is 5 binaries (auditctl, aureport, ausearch, auditd,
-    # augenrules), not the 6 a real audit script usually lists -- confirmed
-    # via Postgres that debian_linux_13's own script for "Ensure audit tools
-    # mode is configured" drops /sbin/autrace from its array entirely (the
-    # other 5 real target documents keep it); checking a fixed 6-tool list
-    # would either wrongly fail debian_13 targets its own document doesn't
-    # require autrace from, or (if autrace were dropped everywhere) under-
-    # check the other 5 documents. This 5-tool intersection is exactly
-    # debian_13's own real condition, and a faithful (if partial) subset of
-    # the other 5's -- same kind of reduced-but-real subset already used by
-    # Group I's _AUDIT_TOOL_PATHS above, for the same reason.
+    # The tool list is 6 binaries (auditctl, aureport, ausearch, auditd,
+    # augenrules, autrace) -- debian_linux_13's own script for "Ensure audit
+    # tools mode is configured" drops /sbin/autrace from its array (the
+    # other 5 real target documents keep it), but checking it uniformly
+    # everywhere is a strict superset, not a false-positive risk: a missing
+    # /sbin/autrace just yields no matching stat line for that path (see
+    # _parse_stat_lines), and a present-but-permissive one is a real gap
+    # regardless of whether the specific target document's own audit text
+    # happens to check it -- same "widen the shared check, don't branch per
+    # document" pattern used everywhere else in this module.
     (
         "audit_conf_text",
         "===AUDIT_CONF===",
@@ -222,7 +221,7 @@ _TEXT_BLOCKS = [
         "else echo 'LOGDIR_NOT_FOUND'; echo '---LOGFILES---'; fi; "
         "echo '---TOOLS---'; "
         "stat -Lc 'mode=%a uid=%u gid=%g gname=%G path=%n' /sbin/auditctl /sbin/aureport "
-        "/sbin/ausearch /sbin/auditd /sbin/augenrules 2>&1",
+        "/sbin/ausearch /sbin/auditd /sbin/augenrules /sbin/autrace 2>&1",
     ),
     # Best-effort "is this target a container" signal for demo.sh's report
     # (scripts/demo/report.py) -- not read by any real Check, this tool has
