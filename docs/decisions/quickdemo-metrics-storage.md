@@ -1,5 +1,12 @@
 # quickdemo run history: plain JSON files, not a Postgres table
 
+> **Nota (2026-08-27):** `quickdemo.sh` foi renomeado para `demo.sh`
+> (`data/quickdemo/` -> `data/demo/`) quando o projeto passou a mirar uma
+> demo pronta para pitch de investidores em vez de um evento informal. Esta
+> decisão continua válida como está — é um registro histórico do raciocínio
+> por trás do formato de armazenamento, não reescrito para a nomenclatura
+> nova.
+
 `quickdemo.sh` now writes `data/quickdemo/status.json` (overwritten live,
 current-step + completed-steps-so-far for a running demo) and
 `data/quickdemo/runs.jsonl` (one JSON line appended per completed run: run_id,

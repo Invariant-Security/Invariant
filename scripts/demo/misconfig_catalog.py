@@ -1,24 +1,26 @@
-"""Catalog of demo misconfiguration recipes for quickdemo.sh.
+"""Catalog of demo misconfiguration recipes for demo.sh.
 
 Each Recipe below breaks exactly one control that PASSES on the hardened
-quickdemo images (infra/docker/quickdemo-{debian,ubuntu}-hardened/Dockerfile)
-back to a FAIL state, via a plain `docker exec <container> sh -c "<command>"`
--- no new packages, no network, matching the same "pure config" posture the
-hardened Dockerfiles themselves use. scripts/quickdemo/apply_misconfigs.py
-draws 2-3 non-repeating recipes per "problem" container from this pool.
+demo images (infra/docker/demo-{debian,ubuntu}-hardened/Dockerfile) back to
+a FAIL state, via a plain `docker exec <container> sh -c "<command>"` -- no
+new packages, no network, matching the same "pure config" posture the
+hardened Dockerfiles themselves use. scripts/demo/apply_misconfigs.py draws
+2-3 non-repeating recipes per "problem" container from this pool.
 
 Every recipe cites the real Check.titles list it targets, copied verbatim
 from src/invariant/assessment/__init__.py's CHECKS -- never an invented
 failure condition. See docs/architecture/checks.md for the non-negotiable
 rule this enforces ("every Check must cite a real control... never
 invented") and for how "demo-eligible" (this catalog's scope) was derived:
-it's every one of the 122 CHECKS that already PASSES on both hardened images
-except the fixed structural gap documented in STRUCTURAL_GAP_TITLES below
-(no cron.{hourly,weekly,monthly}/journald-config/libpam-pwquality on either
-image, an immutable audit rule set never actually loaded even though
-round 2 installed the auditd package itself -- see that constant's own
-comment -- the same class of gap already documented for the 6 dev/test
-containers in tests/assessment/test_assess_target.py's _SYSTEMIC_GAPS).
+it's every one of the 165 CHECKS that already PASSES on both hardened
+images except the 5 genuinely-impossible-in-an-unprivileged-container gaps
+documented in CONTAINER_IMPOSSIBLE_TITLES below (no bootloader, no
+functioning systemd/journald PID 1, no immutable-flag-capable audit
+subsystem without extra capabilities). Everything else that used to be a
+gap here (cron file permissions, pam_pwquality, su restriction, faillock
+root lockout, single time-sync daemon, auditd.conf directives, real audit
+rules) was closed by hardening the two Dockerfiles for real -- see
+docs/architecture/checks.md's own history of that work.
 
 `document` on each Recipe is informational only (which of the two demo CIS
 documents -- debian_linux_11 or ubuntu_linux_20_04 -- this recipe's control
@@ -47,74 +49,32 @@ class Recipe:
     commands: tuple[str, ...]
 
 
-# The 15 CHECKS titles that fail the same way on both hardened images
-# regardless of configuration -- no sudo/cron.{hourly,weekly,monthly}/
-# auditd/libpam-pwquality installed, and journald.conf/bootloader config
-# never present in a container. Confirmed empirically against live
-# quickdemo-debian-hardened/quickdemo-ubuntu-hardened containers (see
-# docs/architecture/checks.md for the full list with reasons). quickdemo.sh
-# uses this constant to separate "environmental" FAILs (here, same on every
-# demo container including the hardened baseline) from "today's story"
-# FAILs (a RECIPES entry that was actually applied to that container).
-STRUCTURAL_GAP_TITLES = frozenset(
+# The 5 CHECKS titles that fail on both hardened images no matter how much
+# they're configured -- genuinely impossible inside an unprivileged Docker
+# container, not "never got around to hardening it" (see the module
+# docstring's history: the other 20 that used to be structural gaps here
+# were closed by hardening the two Dockerfiles for real). demo.sh's report
+# (scripts/demo/report.py) only honors a title in this set as
+# "environmental" when the specific target is actually detected as a
+# container (facts.is_running_in_container()) -- on a bare-metal/VM target
+# these same titles are just normal PASS/FAIL based on the real evaluate()
+# result, no automatic excuse.
+CONTAINER_IMPOSSIBLE_TITLES = frozenset(
     {
-        "Ensure pam_pwquality module is enabled",
-        # Round 2 (Group N) installed the auditd/audispd-plugins packages
-        # into both hardened images (needed for the new "Ensure auditd
-        # packages are installed" check) -- confirmed empirically this also
-        # made /etc/audit/ and /sbin/auditctl etc. exist with correct
-        # root:root ownership by default, so the 4 audit *ownership*
-        # checks that used to be structural gaps now PASS with zero extra
-        # work. "Ensure the audit configuration is immutable" still fails
-        # -- that needs an actual loaded, immutable-flagged rule set, not
-        # just the package installed, so it stays a real structural gap.
+        # Needs an actual loaded, immutable-flagged auditd rule set (`auditctl
+        # -e 2`) -- the audit netlink subsystem generally isn't fully
+        # functional inside an unprivileged container namespace, so even
+        # with auditd installed and rules written to disk (see the two
+        # Dockerfiles), there's no live daemon to flag as immutable.
         "Ensure the audit configuration is immutable",
-        "Ensure sudo log file exists",
-        # /etc/crontab, cron.hourly/weekly/monthly: both title wordings
-        # (see the Group A comment in assessment/__init__.py -- debian_linux_11
-        # uses "Ensure permissions on X are configured", ubuntu_linux_20_04
-        # uses "Ensure access to X is configured", same underlying control).
-        # Confirmed the hard way: a first version of this set only listed the
-        # "access to" wording, which silently left debian_linux_11's own 4
-        # cron findings unclassified ("UNEXPLAINED") in quickdemo.sh's step 9.
-        "Ensure access to /etc/crontab is configured",
-        "Ensure permissions on /etc/crontab are configured",
-        "Ensure access to /etc/cron.hourly is configured",
-        "Ensure permissions on /etc/cron.hourly are configured",
-        "Ensure access to /etc/cron.weekly is configured",
-        "Ensure permissions on /etc/cron.weekly are configured",
-        "Ensure access to /etc/cron.monthly is configured",
-        "Ensure permissions on /etc/cron.monthly are configured",
+        # journald.conf's Compress/Storage/rotation directives aren't
+        # meaningfully consulted without systemd-journald actually running
+        # as part of a real systemd PID 1, which this container doesn't have.
         "Ensure journald Compress is configured",
         "Ensure journald Storage is configured",
         "Ensure journald log file rotation is configured",
+        # /boot/grub/grub.cfg never exists in a container -- no bootloader.
         "Ensure access to bootloader config is configured",
-        # Round 3: neither hardened image configures /etc/pam.d/su's
-        # pam_wheel.so line or faillock.conf's even_deny_root/
-        # root_unlock_time -- same "never hardened for it" story as the
-        # rest of this set. Confirmed via assess_target() against both
-        # live demo images, same as everything else here.
-        "Ensure access to the su command is restricted",
-        "Ensure password failed attempts lockout includes root account",
-        # Round 4: neither image installs chrony/systemd-timesyncd, sets
-        # any real auditd.conf directive beyond the shipped package
-        # defaults, or loads a single real audit rule -- confirmed via
-        # assess_target() against both live demo images. The 8 audit-rule-
-        # collection titles all fail closed on an empty /etc/audit/rules.d;
-        # the 3 auditd.conf ones fail because the package's own shipped
-        # defaults (ROTATE/SUSPEND/SYSLOG) don't meet CIS's required values.
-        "Ensure a single time synchronization daemon is in use",
-        "Ensure audit logs are not automatically deleted",
-        "Ensure system is disabled when audit logs are full",
-        "Ensure system warns when audit logs are low on space",
-        "Ensure actions as another user are always logged",
-        "Ensure events that modify date and time information are collected",
-        "Ensure events that modify the sudo log file are collected",
-        "Ensure events that modify the system's Mandatory Access Controls are collected",
-        "Ensure login and logout events are collected",
-        "Ensure session initiation information is collected",
-        "Ensure successful file system mounts are collected",
-        "Ensure unsuccessful file access attempts are collected",
     }
 )
 
@@ -428,8 +388,18 @@ RECIPES: list[Recipe] = [
         check_titles=("Ensure pam_unix does not include remember",),
         document=_BOTH_DOCS,
         description="remember=5 added to pam_unix.so on common-password (belongs on pam_pwhistory, not pam_unix)",
+        # [a-z0-9_]*, not [a-z0-9]* -- found the hard way running demo.sh
+        # with several different seeds: ubuntu's real common-password line
+        # reads "pam_unix.so obscure use_authtok ...", and the underscore
+        # in "use_authtok" isn't in [a-z0-9], so the old pattern only
+        # captured "use" and inserted "remember=5" mid-word, corrupting the
+        # line into "obscure use remember=5_authtok ..." -- silently
+        # breaking the unrelated "Ensure pam_unix includes use_authtok"
+        # check as a second, untracked FAIL. Confirmed empirically against
+        # a live container that the corrected pattern leaves use_authtok
+        # intact while still inserting remember=5.
         commands=(
-            "sed -i 's/\\(pam_unix\\.so obscure [a-z0-9]*\\)/\\1 remember=5/' /etc/pam.d/common-password",
+            "sed -i 's/\\(pam_unix\\.so obscure [a-z0-9_]*\\)/\\1 remember=5/' /etc/pam.d/common-password",
         ),
     ),
     Recipe(
@@ -541,7 +511,7 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         id="extra-uid0-account",
-        # Found running quickdemo.sh for real after round 2 added "Ensure
+        # Found running demo.sh for real after round 2 added "Ensure
         # no duplicate UIDs exist": a second UID-0 account is unavoidably
         # also a duplicate UID, same story as extra-gid0-group below. Also
         # picked up two pre-existing (round-2-unrelated) latent bugs while
@@ -601,7 +571,7 @@ RECIPES: list[Recipe] = [
         id="extra-gid0-group",
         distro="any",
         # A second group sharing GID 0 is unavoidably *also* a duplicate
-        # GID -- found the hard way running quickdemo.sh for real after
+        # GID -- found the hard way running demo.sh for real after
         # round 2 added "Ensure no duplicate GIDs exist": this recipe
         # produced a genuine second FAIL every time it landed on the same
         # container as no compensating recipe, showing up as UNEXPLAINED

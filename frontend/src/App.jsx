@@ -7,36 +7,42 @@ import './App.css'
 // deploy where the API isn't on localhost:8000, without touching code.
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
 
-// The 9 pipeline steps quickdemo.sh's section() calls announce, in order.
+// The 9 pipeline steps demo.sh's section() calls announce, in order --
+// values here are an exact copy of demo.sh's own strings (translated to
+// Portuguese along with the rest of that script's printed narrative), not
+// just labels: the checklist below matches these against status.json's
+// current_step/completed_steps by exact string equality. If a step name in
+// demo.sh ever changes, update this list to match or the checklist will
+// silently show every step as "pending" forever.
 // The API only reports which steps are *done so far* (status.completed_steps)
 // plus the *current* one (status.current_step) -- it doesn't know the full
 // step list ahead of time, so this page hardcodes the same names used in
-// quickdemo.sh to render "pending" steps in the checklist below. If a step
-// name in quickdemo.sh ever changes, update this list to match.
-const QUICKDEMO_STEPS = [
-  'Preflight checks',
-  'Starting postgres + adminer (infra/docker-compose.yml, DB only)',
-  'Starting the 5 quickdemo containers (infra/docker-compose.quickdemo.yml)',
-  'Waiting for all 5 demo containers to respond',
-  'Applying misconfigurations (scripts/quickdemo/apply_misconfigs.py)',
-  'Applying database migrations (alembic upgrade head)',
-  'Extracting + importing the two demo CIS documents',
-  'Assessing the 5 demo containers (invariant assess)',
-  'Final summary: misconfig manifest vs assess results',
+// demo.sh to render "pending" steps in the checklist below.
+const DEMO_STEPS = [
+  'Verificações iniciais',
+  'Subindo postgres + adminer (infra/docker-compose.yml, só banco)',
+  'Subindo os 6 containers da demo (infra/docker-compose.demo.yml)',
+  'Esperando os 6 containers da demo responderem',
+  'Aplicando misconfigurações (scripts/demo/apply_misconfigs.py)',
+  'Aplicando migrações do banco (alembic upgrade head)',
+  'Extraindo + importando os dois documentos CIS da demo',
+  'Avaliando os 6 containers da demo (invariant assess)',
+  'Resumo final: manifesto de misconfigurações vs resultado do assess',
 ]
 
 // The 5-stage pipeline this page's "PipelineStrip" shows, distinct from the
-// 9 concrete quickdemo.sh steps above -- this is the conceptual data
-// pipeline (ingest -> ... -> evidence), always shown as one static row.
+// 9 concrete demo.sh steps above -- this is the conceptual data pipeline
+// (ingest -> ... -> evidence), always shown as one static row.
 const PIPELINE_STAGES = ['Ingest', 'Extract', 'Normalize', 'Assess', 'Evidence']
 
-// Real roles, not guesses -- see infra/docker-compose.quickdemo.yml and
-// quickdemo.sh's HARDENED_CONTAINER/PROBLEM_CONTAINERS.
+// Real roles, not guesses -- see infra/docker-compose.demo.yml and
+// demo.sh's HARDENED_CONTAINER/PROBLEM_CONTAINERS.
 const ENDPOINT_INFO = {
   'invariant-demo-ubuntu-hardened':
     'Hardened Ubuntu baseline -- reference image, never gets a misconfig applied.',
   'invariant-demo-debian-1': 'Hardened Debian image, 2-3 misconfigs applied this run.',
   'invariant-demo-debian-2': 'Hardened Debian image, 2-3 misconfigs applied this run.',
+  'invariant-demo-debian-3': 'Hardened Debian image, 2-3 misconfigs applied this run.',
   'invariant-demo-ubuntu-1': 'Hardened Ubuntu image, 2-3 misconfigs applied this run.',
   'invariant-demo-ubuntu-2': 'Hardened Ubuntu image, 2-3 misconfigs applied this run.',
 }
@@ -44,12 +50,15 @@ const ENDPOINT_INFO = {
 // Why "NOT ASSESSED" exists at all: the assessment engine only ever returns
 // PASS/FAIL (every Check.evaluate() is a plain bool) -- there's no native
 // third status. What this page labels NOT ASSESSED is a FAIL that
-// report.py's build_report() already recognizes as a structural gap (the
-// control's title matches misconfig_catalog.py's STRUCTURAL_GAP_TITLES: the// same ~15 checks fail identically on every demo container, including the
-// hardened baseline, because these are minimal containers without
-// sudo/cron.*/auditd/pwquality installed). Real FAILs (a misconfig recipe
-// actually applied this run) stay FAIL; only the structural ones are
-// relabeled here, in presentation only -- nothing in the data model changes.
+// report.py's build_report() already recognizes as a container-impossible
+// gap (the control's title matches misconfig_catalog.py's
+// CONTAINER_IMPOSSIBLE_TITLES, and the target was detected as a container:
+// the same 5 checks fail identically on every demo container, including
+// the hardened baseline, because no bootloader/systemd/functional audit
+// subsystem exists inside an unprivileged container). Real FAILs (a
+// misconfig recipe actually applied this run) stay FAIL; only the
+// container-impossible ones are relabeled here, in presentation only --
+// nothing in the data model changes.
 const STRUCTURAL_GAP_EXPLANATION =
   'The target environment is a minimal container and may not provide all services, ' +
   'packages or system interfaces required by the benchmark.'
@@ -134,7 +143,7 @@ function StepChecklist({ status }) {
 
   return (
     <ol className="step-list">
-      {QUICKDEMO_STEPS.map((name) => {
+      {DEMO_STEPS.map((name) => {
         let state = 'pending'
         let duration = null
         if (completed.has(name)) {
@@ -490,7 +499,7 @@ function AssessmentHistory({ runs, onOpenRun }) {
       <section>
         <h2>Assessment History</h2>
         <p className="hint">
-          No runs recorded yet. Run <code>./quickdemo.sh</code> from the repo root to produce one.
+          No runs recorded yet. Run <code>./demo.sh</code> from the repo root to produce one.
         </p>
       </section>
     )
@@ -603,7 +612,7 @@ export default function App() {
 
     async function poll() {
       try {
-        const nextStatus = await fetchJson('/api/quickdemo/status')
+        const nextStatus = await fetchJson('/api/demo/status')
         if (cancelled) return
         setStatus(nextStatus)
         setStatusChecked(true)
@@ -627,7 +636,7 @@ export default function App() {
 
     async function loadIdleData() {
       try {
-        const nextRuns = await fetchJson('/api/quickdemo/runs')
+        const nextRuns = await fetchJson('/api/demo/runs')
         if (cancelled) return
         setRuns(nextRuns ?? [])
       } catch (err) {
@@ -684,7 +693,7 @@ export default function App() {
 
       {statusChecked && !status && (
         <p className="hint">
-          No quickdemo run has started yet. Run <code>./quickdemo.sh</code> from the repo root to begin.
+          No demo run has started yet. Run <code>./demo.sh</code> from the repo root to begin.
         </p>
       )}
 

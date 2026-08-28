@@ -11,10 +11,10 @@ client = TestClient(main.app)
 def test_get_status_404_when_no_run_has_started(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "STATUS_PATH", tmp_path / "status.json")
 
-    response = client.get("/api/quickdemo/status")
+    response = client.get("/api/demo/status")
 
     assert response.status_code == 404
-    assert "quickdemo.sh" in response.json()["detail"]
+    assert "demo.sh" in response.json()["detail"]
 
 
 def test_get_status_returns_status_json_contents(tmp_path, monkeypatch):
@@ -29,7 +29,7 @@ def test_get_status_returns_status_json_contents(tmp_path, monkeypatch):
     status_path.write_text(json.dumps(status))
     monkeypatch.setattr(main, "STATUS_PATH", status_path)
 
-    response = client.get("/api/quickdemo/status")
+    response = client.get("/api/demo/status")
 
     assert response.status_code == 200
     assert response.json() == status
@@ -38,7 +38,7 @@ def test_get_status_returns_status_json_contents(tmp_path, monkeypatch):
 def test_get_runs_empty_list_when_no_runs_file(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "RUNS_PATH", tmp_path / "runs.jsonl")
 
-    response = client.get("/api/quickdemo/runs")
+    response = client.get("/api/demo/runs")
 
     assert response.status_code == 200
     assert response.json() == []
@@ -51,7 +51,7 @@ def test_get_runs_returns_most_recent_first(tmp_path, monkeypatch):
     runs_path.write_text(json.dumps(run_a) + "\n" + json.dumps(run_b) + "\n")
     monkeypatch.setattr(main, "RUNS_PATH", runs_path)
 
-    response = client.get("/api/quickdemo/runs")
+    response = client.get("/api/demo/runs")
 
     assert response.status_code == 200
     body = response.json()
@@ -64,7 +64,7 @@ def test_get_runs_skips_blank_lines(tmp_path, monkeypatch):
     runs_path.write_text(json.dumps(run_a) + "\n\n")
     monkeypatch.setattr(main, "RUNS_PATH", runs_path)
 
-    response = client.get("/api/quickdemo/runs")
+    response = client.get("/api/demo/runs")
 
     assert response.status_code == 200
     assert response.json() == [run_a]
@@ -73,10 +73,10 @@ def test_get_runs_skips_blank_lines(tmp_path, monkeypatch):
 def test_get_latest_run_404_when_no_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "RUNS_PATH", tmp_path / "runs.jsonl")
 
-    response = client.get("/api/quickdemo/runs/latest")
+    response = client.get("/api/demo/runs/latest")
 
     assert response.status_code == 404
-    assert "quickdemo.sh" in response.json()["detail"]
+    assert "demo.sh" in response.json()["detail"]
 
 
 def test_get_latest_run_returns_report_of_last_line(tmp_path, monkeypatch):
@@ -86,7 +86,7 @@ def test_get_latest_run_returns_report_of_last_line(tmp_path, monkeypatch):
     runs_path.write_text(json.dumps(run_a) + "\n" + json.dumps(run_b) + "\n")
     monkeypatch.setattr(main, "RUNS_PATH", runs_path)
 
-    response = client.get("/api/quickdemo/runs/latest")
+    response = client.get("/api/demo/runs/latest")
 
     assert response.status_code == 200
     assert response.json() == run_b["report"]
@@ -94,7 +94,7 @@ def test_get_latest_run_returns_report_of_last_line(tmp_path, monkeypatch):
 
 def test_cors_allows_vite_dev_server_origin():
     response = client.options(
-        "/api/quickdemo/status",
+        "/api/demo/status",
         headers={
             "Origin": "http://localhost:5173",
             "Access-Control-Request-Method": "GET",
@@ -111,13 +111,13 @@ def test_cors_origins_configurable_via_env_var(monkeypatch):
         prod_client = TestClient(reloaded.app)
 
         allowed = prod_client.options(
-            "/api/quickdemo/status",
+            "/api/demo/status",
             headers={"Origin": "https://prod.example.com", "Access-Control-Request-Method": "GET"},
         )
         assert allowed.headers["access-control-allow-origin"] == "https://prod.example.com"
 
         dev_default = prod_client.options(
-            "/api/quickdemo/status",
+            "/api/demo/status",
             headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"},
         )
         assert "access-control-allow-origin" not in dev_default.headers

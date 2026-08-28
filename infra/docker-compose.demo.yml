@@ -1,0 +1,49 @@
+# Isolated infra for demo.sh's in-person, offline live demo -- entirely
+# separate from infra/docker-compose.yml (never edited by this file) so the
+# 6 dev/test containers real integration tests depend on
+# (tests/assessment/test_assess_target.py, tests/assessment/test_facts.py)
+# are never touched. Every container name here is prefixed
+# `invariant-demo-*` so it can never collide with the 6 `invariant-*`
+# dev/test containers.
+#
+# Run from repo root: docker compose -f infra/docker-compose.demo.yml up -d
+# (images must already be built locally -- demo.sh's preflight checks for
+# that; this file intentionally has no `build:` fallback network surprise
+# mid-demo beyond what's already cached).
+
+services:
+  # The demo's clean baseline: hardened, only the genuine "impossible in an
+  # unprivileged container" gaps FAIL (see docs/architecture/checks.md and
+  # scripts/demo/misconfig_catalog.py's CONTAINER_IMPOSSIBLE_TITLES).
+  demo-ubuntu-hardened:
+    image: demo-ubuntu-hardened:latest
+    build: ./docker/demo-ubuntu-hardened
+    container_name: invariant-demo-ubuntu-hardened
+
+  # The 5 "problem" containers -- start from the hardened images, then get
+  # 2-3 randomly-applied misconfigs from scripts/demo/apply_misconfigs.py
+  # (not baked into the image, so the story is different every run).
+  demo-debian-1:
+    image: demo-debian-hardened:latest
+    build: ./docker/demo-debian-hardened
+    container_name: invariant-demo-debian-1
+
+  demo-debian-2:
+    image: demo-debian-hardened:latest
+    build: ./docker/demo-debian-hardened
+    container_name: invariant-demo-debian-2
+
+  demo-debian-3:
+    image: demo-debian-hardened:latest
+    build: ./docker/demo-debian-hardened
+    container_name: invariant-demo-debian-3
+
+  demo-ubuntu-1:
+    image: demo-ubuntu-hardened:latest
+    build: ./docker/demo-ubuntu-hardened
+    container_name: invariant-demo-ubuntu-1
+
+  demo-ubuntu-2:
+    image: demo-ubuntu-hardened:latest
+    build: ./docker/demo-ubuntu-hardened
+    container_name: invariant-demo-ubuntu-2

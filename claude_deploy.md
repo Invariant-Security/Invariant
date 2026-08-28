@@ -1,4 +1,4 @@
-# Deploying the quickdemo pipeline to a production server
+# Deploying the demo pipeline to a production server
 
 This is a runbook for Claude Code to follow **on the prod server**, after this repo has
 been cloned/pushed there. It assumes you (Claude Code, reading this fresh, with no memory
@@ -17,7 +17,7 @@ pipeline that runs elsewhere. The whole thing — Docker, Postgres, the `invaria
 FastAPI app, and the built React frontend — runs on this one server. Nothing here talks to
 any other machine.
 
-`quickdemo.sh` itself (repo root) is unchanged for this — it already assumes
+`demo.sh` itself (repo root) is unchanged for this — it already assumes
 Docker/Postgres/the CLI are all on the same box it runs on. Deploying "to prod" means
 standing up that same one-box setup on a real server instead of a dev sandbox, then
 serving the frontend+API so people can reach it over the network during the event instead
@@ -106,16 +106,16 @@ alembic upgrade head
 
 Two options, ask the human which applies here if it's not obvious from context:
 
-- **Full quickdemo pipeline** (steps 2-9 of `quickdemo.sh`, repo root — read that script's
-  header comment for the full list): brings up the 5 demo containers, applies random
+- **Full demo pipeline** (steps 2-9 of `demo.sh`, repo root — read that script's
+  header comment for the full list): brings up the 6 demo containers, applies random
   misconfigs, extracts/imports the two demo CIS documents, runs `invariant assess`. This
-  is what actually produces `data/quickdemo/status.json` + `runs.jsonl`, which is what the
-  frontend/API show. Just run `./quickdemo.sh` once things above are up — it's designed to
+  is what actually produces `data/demo/status.json` + `runs.jsonl`, which is what the
+  frontend/API show. Just run `./demo.sh` once things above are up — it's designed to
   be one-button and idempotent (safe to re-run).
-- If the demo Docker images (`quickdemo-debian-hardened`, `quickdemo-ubuntu-hardened`,
-  the 4 "problem" ones reuse those two) aren't built yet on this server, build them first:
-  `docker compose -f infra/docker-compose.quickdemo.yml build`. This needs network access
-  once, for base image pulls — after that `quickdemo.sh` is offline. `quickdemo.sh`'s own
+- If the demo Docker images (`demo-debian-hardened`, `demo-ubuntu-hardened`,
+  the 5 "problem" ones reuse those two) aren't built yet on this server, build them first:
+  `docker compose -f infra/docker-compose.demo.yml build`. This needs network access
+  once, for base image pulls — after that `demo.sh` is offline. `demo.sh`'s own
   preflight check aborts early with a clear message if these aren't built, so just run it
   and follow what it says.
 
@@ -162,7 +162,7 @@ services on this box before introducing a new pattern.
 Don't report success from config alone — actually check:
 
 ```bash
-curl -s https://<the-real-api-origin>/api/quickdemo/status | head -c 300
+curl -s https://<the-real-api-origin>/api/demo/status | head -c 300
 ```
 
 And load the real public frontend URL in a browser (or via Playwright, same as the
@@ -175,6 +175,6 @@ page or a CORS error in the console.
   `infra/docker-compose.yml` dev/test containers + Docker daemon up.
 - `frontend/README.md` has the full local dev + deploy instructions this file summarizes
   — read it too if anything here is ambiguous.
-- `docs/architecture/checks.md` explains why every quickdemo container (even the
+- `docs/architecture/checks.md` explains why every demo container (even the
   "hardened" baseline) shows some FAILs — that's documented/expected, not a bug to chase
   during deploy verification.

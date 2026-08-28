@@ -9,6 +9,7 @@ from invariant.assessment.facts import (
     _parse_collect_output,
     _parse_installed_packages,
     _parse_stat_line,
+    is_running_in_container,
     parse_sshd_config,
 )
 
@@ -96,3 +97,24 @@ def test_parse_collect_output_text_block_defaults_to_empty_string():
 def test_parse_collect_output_raises_when_markers_missing():
     with pytest.raises(LookupError):
         _parse_collect_output("Error response from daemon: No such container: nope\n")
+
+
+def test_is_running_in_container_detects_dockerenv():
+    facts = _parse_collect_output(
+        _build_full_output({"container_detection_text": "/.dockerenv:present\n0::/"})
+    )
+    assert is_running_in_container(facts) is True
+
+
+def test_is_running_in_container_detects_cgroup_marker():
+    facts = _parse_collect_output(
+        _build_full_output({"container_detection_text": "/.dockerenv:absent\n0::/docker/abc123"})
+    )
+    assert is_running_in_container(facts) is True
+
+
+def test_is_running_in_container_false_on_bare_metal():
+    facts = _parse_collect_output(
+        _build_full_output({"container_detection_text": "/.dockerenv:absent\n0::/"})
+    )
+    assert is_running_in_container(facts) is False

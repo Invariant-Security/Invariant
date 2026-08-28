@@ -1,9 +1,9 @@
-# Checks: structure, traceability rule, and the quickdemo-eligible subset
+# Checks: structure, traceability rule, and the demo-eligible subset
 
 This documents `src/invariant/assessment/__init__.py`'s `Check` structure
 for anyone extending it or building on top of it (e.g.
-`scripts/quickdemo/misconfig_catalog.py`), and states the non-negotiable
-rule every `Check` and every misconfig recipe must follow.
+`scripts/demo/misconfig_catalog.py`), and states the non-negotiable rule
+every `Check` and every misconfig recipe must follow.
 
 ## The `Check` structure
 
@@ -54,11 +54,11 @@ states for the whole pipeline (source -> document version -> raw artifact
 without a real control behind it breaks that chain at the last step, the
 one a demo viewer actually reads.
 
-This rule extends to `scripts/quickdemo/misconfig_catalog.py`: **every
-`Recipe` must cite the real `Check.titles` (copied verbatim from this
-module) it breaks** -- a misconfig with no matching `Check` would make
-`quickdemo.sh`'s demo lie about what it's showing. `misconfig_catalog.py`'s
-own module docstring repeats this; see that file for the full recipe list.
+This rule extends to `scripts/demo/misconfig_catalog.py`: **every `Recipe`
+must cite the real `Check.titles` (copied verbatim from this module) it
+breaks** -- a misconfig with no matching `Check` would make `demo.sh`'s
+demo lie about what it's showing. `misconfig_catalog.py`'s own module
+docstring repeats this; see that file for the full recipe list.
 
 If a control looks worth adding but doesn't fit `SystemFacts`' current
 collection scope, or its audit condition can't be resolved for both demo
@@ -67,78 +67,122 @@ than faked -- `assessment/__init__.py`'s own comments document several
 candidates that were looked at and dropped for exactly this reason (see the
 comments above `CHECKS`'s Group F/I/J entries).
 
-## The quickdemo-eligible subset
+## The demo-eligible subset
 
-`quickdemo.sh` uses two purpose-built images
-(`infra/docker/quickdemo-{debian,ubuntu}-hardened/`, **not** the 6
-dev/test images under `infra/docker/{debian,ubuntu}-*` -- those are
-untouched, relied on by `tests/assessment/`'s `@pytest.mark.integration`
-tests) that are hardened via plain config edits (`chmod`/`chown`/`sed`) plus
-(as of round 2) a handful of real packages (`ufw`/`sudo`/`auditd`/
-`audispd-plugins`/`aide`/`aide-common`, alongside the base pipeline's own
-`openssh-server`) whose entire point *is* package presence -- there's no
-"pure config" way to pass a check that literally asks "is X installed?" --
-to **PASS every `Check` that's achievable without a systemd-capable image
-or real separate filesystem mounts.**
+`demo.sh` uses two purpose-built images
+(`infra/docker/demo-{debian,ubuntu}-hardened/`, **not** the 6 dev/test
+images under `infra/docker/{debian,ubuntu}-*` -- those are untouched,
+relied on by `tests/assessment/`'s `@pytest.mark.integration` tests) that
+are hardened via plain config edits (`chmod`/`chown`/`sed`) plus a handful
+of real packages (`ufw`/`sudo`/`auditd`/`audispd-plugins`/`aide`/
+`aide-common`/`cron`/`libpam-pwquality`/`chrony`, alongside the base
+pipeline's own `openssh-server`) whose entire point *is* package
+presence -- there's no "pure config" way to pass a check that literally
+asks "is X installed?" -- plus a real (if never loaded by a live daemon)
+auditd rule set written to `/etc/audit/rules.d/50-hardening.rules` at build
+time, since the checks that verify audit-rule collection only read that
+file, never a live `auditctl -l`.
+
+Goal: **PASS every `Check` except the handful that are genuinely impossible
+inside an unprivileged Docker container** (no bootloader, no functioning
+systemd/journald PID 1, no immutable-flag-capable audit subsystem without
+extra capabilities) -- a materially higher bar than earlier iterations of
+this image, which left ~20 checks failing for no better reason than "nobody
+configured it yet." Those 20 were closed for real (see the history below);
+what's left is a short, honest list of things a Docker container simply
+cannot do.
 
 Confirmed empirically (built and assessed against live containers): of the
-165 `CHECKS`, exactly **140 pass** on both hardened images with zero
-further changes, and the same **25 fail structurally** on both, regardless
-of configuration -- because the underlying package/file/rule simply isn't
-present or loaded, and installing what's left would mean either a
-systemd-capable base image, real partition mounts, or actually configuring
-and loading a real auditd rule set, all bigger changes than "add a
-package":
+165 `CHECKS`, exactly **160 pass** on both hardened images with zero
+further changes, and the same **5 fail structurally** on both, regardless
+of configuration:
 
-| Check title | Why it's structural |
+| Check title | Why it's genuinely impossible in a container |
 |---|---|
-| Ensure pam_pwquality module is enabled | `pam_pwquality.so` ships in `libpam-pwquality`, not installed (confirmed: not present under `/usr/lib/*/security/` on a bare image). `pwquality.conf`'s own *directives* (minlen, complexity, difok, ...) are still demo-eligible -- CIS greps that file directly, independent of whether the module is loaded. |
-| Ensure the audit configuration is immutable | `auditd`/`audispd-plugins` **are** installed (round 2 -- needed for "Ensure auditd packages are installed"), which also fixed 4 *other* audit-ownership checks that used to be structural gaps here for free (`/etc/audit/`, `/sbin/auditctl` etc. now exist with correct ownership by default). This one still fails -- it needs an actual loaded, immutable-flagged rule set, not just the package installed. |
-| Ensure sudo log file exists | `sudo` **is** installed (round 2), but its default `/etc/sudoers` has no `Defaults logfile=...` line -- a real gap, just not one round 2's own checks needed to close. |
-| Ensure access to /etc/crontab is configured | no `cron` installed -- `/etc/crontab` doesn't exist (unlike `/etc/cron.d`/`/etc/cron.daily`, which ship on a bare image via other packages and *are* demo-eligible) |
-| Ensure access to /etc/cron.hourly is configured | same -- `cron` not installed |
-| Ensure access to /etc/cron.weekly is configured | same |
-| Ensure access to /etc/cron.monthly is configured | same |
-| Ensure journald Compress is configured | `/etc/systemd/journald.conf` isn't consulted the same way / not meaningfully configurable in an unprivileged container without systemd running |
+| Ensure the audit configuration is immutable | Needs an actual loaded, immutable-flagged auditd rule set (`auditctl -e 2`) -- the audit netlink subsystem generally isn't fully functional inside an unprivileged container namespace, so even with auditd installed and rules written to disk, there's no live daemon to flag as immutable. |
+| Ensure journald Compress is configured | `/etc/systemd/journald.conf`'s directives aren't meaningfully consulted without systemd-journald actually running as part of a real systemd PID 1, which this container doesn't have. |
 | Ensure journald Storage is configured | same |
 | Ensure journald log file rotation is configured | same |
 | Ensure access to bootloader config is configured | `/boot/grub/grub.cfg` never exists in a container (no bootloader) |
-| Ensure access to the su command is restricted | round 3 -- neither image configures `/etc/pam.d/su`'s `pam_wheel.so` line |
-| Ensure password failed attempts lockout includes root account | round 3 -- neither image sets `even_deny_root`/`root_unlock_time` in `faillock.conf` |
-| Ensure a single time synchronization daemon is in use | round 4 -- neither `chrony` nor `systemd-timesyncd` is installed on either image |
-| Ensure audit logs are not automatically deleted | round 4 -- `auditd.conf`'s shipped default (`max_log_file_action ROTATE`) doesn't meet CIS's required `keep_logs` |
-| Ensure system is disabled when audit logs are full | round 4 -- shipped default (`disk_full_action SUSPEND`) isn't `halt`/`single` |
-| Ensure system warns when audit logs are low on space | round 4 -- shipped default (`space_left_action SYSLOG`) isn't in the required set |
-| Ensure actions as another user are always logged | round 4 -- no real auditd rule loaded on either image (all 8 rows below share this one root cause) |
-| Ensure events that modify date and time information are collected | round 4, same root cause as above |
-| Ensure events that modify the sudo log file are collected | round 4, same root cause (also downstream of "Ensure sudo log file exists" above) |
-| Ensure events that modify the system's Mandatory Access Controls are collected | round 4, same root cause |
-| Ensure login and logout events are collected | round 4, same root cause |
-| Ensure session initiation information is collected | round 4, same root cause |
-| Ensure successful file system mounts are collected | round 4, same root cause |
-| Ensure unsuccessful file access attempts are collected | round 4, same root cause |
 
-(`Ensure ufw is installed`, `Ensure sudo is installed`, `Ensure AIDE is
-installed`, the ~19 "package X is not in use" checks round 2 added, the 7
-of 10 auditd.conf-family checks round 4 added whose shipped defaults
-already comply, and the 2 local-interactive-user checks round 4 added are
-all demo-eligible and PASS today.)
+This 5-title set is `scripts/demo/misconfig_catalog.py`'s
+`CONTAINER_IMPOSSIBLE_TITLES` constant.
 
-This 25-title set is `scripts/quickdemo/misconfig_catalog.py`'s
-`STRUCTURAL_GAP_TITLES` constant. `quickdemo.sh`'s final summary uses it to
-split every FAIL on a demo container into:
+### Container detection: the "environmental" excuse is conditional, not automatic
 
-- **environmental** -- the title is in `STRUCTURAL_GAP_TITLES` (same on
-  every container, including the hardened baseline -- not part of "today's
-  story", just a known, documented gap).
+`facts.py` collects one more fact than any real `Check` reads:
+`container_detection_text` (`/.dockerenv` + `/proc/1/cgroup`), interpreted
+by `is_running_in_container(facts) -> bool`. `demo.sh`'s report
+(`scripts/demo/report.py`) only classifies a FAIL on a
+`CONTAINER_IMPOSSIBLE_TITLES` title as **environmental** when the specific
+target is actually detected as a container -- on a bare-metal or VM target
+(where `is_running_in_container()` returns `False`), the exact same title
+is just a normal FAIL, no automatic excuse, because on a real machine it's
+a real, checkable, fixable gap. This exists precisely so the tool doesn't
+quietly launder a real gap into "environmental" just because the title
+happens to be hard to satisfy in *this specific* demo setup -- the excuse
+is about the target, not the title.
+
+### History: how 20 of the original 25 structural gaps were closed
+
+Earlier hardened images left 25 checks failing "structurally" -- most of
+those weren't actually impossible, just never configured. Round 4/demo
+hardening closed 20 of them for real:
+
+- **Package presence**: `libpam-pwquality`, `cron`, `chrony` installed
+  (closes "pam_pwquality module enabled", the 4 cron file/dir permission
+  checks, and "single time synchronization daemon", the last one via
+  `chrony` XOR `systemd-timesyncd` package presence -- the real CIS audit
+  uses `systemctl is-enabled`/`is-active`, unusable without real systemd in
+  a container, so this is a deliberate package-presence substitution, same
+  pattern as every other package-presence check in this file).
+- **PAM/faillock config**: an empty `sugroup` group + a `pam_wheel.so use_uid
+  group=sugroup` line in `/etc/pam.d/su` (closes "su command restricted");
+  `even_deny_root`/`root_unlock_time = 0` in a freshly-created
+  `/etc/security/faillock.conf` (closes "password failed attempts lockout
+  includes root account").
+- **sudoers**: a `Defaults logfile=/var/log/sudo.log` line (closes "sudo
+  log file exists" and unblocks the matching audit rule below).
+- **auditd.conf directives**: `max_log_file_action = keep_logs`,
+  `disk_full_action = halt`, `disk_error_action = syslog`,
+  `space_left_action = email`, `admin_space_left_action = halt` appended
+  (the package's own shipped defaults -- `ROTATE`/`SUSPEND`/`SUSPEND`/
+  `SYSLOG` -- don't meet CIS's required values; closes 3 checks).
+- **Real auditd rules on disk**: `/etc/audit/rules.d/50-hardening.rules`,
+  written at build time with one rule per control (execve/euid!=uid,
+  date-time syscalls + `/etc/localtime` watch, the sudo log path, both
+  AppArmor paths, lastlog+faillock, utmp+wtmp+btmp, the mount syscall, and
+  EACCES/EPERM access rules) -- closes the 8 "events ... are collected"/
+  "actions ... are logged" titles, since those checks read the rules file
+  directly (`facts.audit_rules_text`), never a live `auditctl -l`.
+
+Two titles were investigated and deliberately **not** closed even though
+they're technically achievable in principle: "Ensure use of privileged
+commands are collected" would need a per-target SUID/SGID enumeration that
+isn't deterministic across builds (dropped rather than faked, per the
+non-negotiable rule above); "Ensure access to all logfiles has been
+configured" has a genuine per-CIS-document condition drift (`debian_linux_11`
+lacks the special-case allowlist the other 5 real target documents have for
+`/var/log/apt/*.log` etc.) -- these aren't part of `CHECKS` at all, so
+they don't appear in the demo-eligible count either way.
+
+### How demo.sh classifies every FAIL
+
+`demo.sh`'s final summary (`scripts/demo/report.py`) splits every FAIL on
+a demo container into:
+
+- **environmental** -- the title is in `CONTAINER_IMPOSSIBLE_TITLES` *and*
+  the target is detected as a container (see above) -- same on every
+  demo container including the hardened baseline, not part of "today's
+  story", just a known, genuine limitation of this environment.
 - **today's story** -- the title matches a `Recipe` that
-  `scripts/quickdemo/apply_misconfigs.py` actually applied to that specific
+  `scripts/demo/apply_misconfigs.py` actually applied to that specific
   container this run.
 
 Any FAIL that's neither would mean a hardened-image regression or an
-untracked misconfig -- `quickdemo.sh` flags that loudly rather than
-silently folding it into one bucket, since it would mean the demo is
-showing something nobody can explain.
+untracked misconfig -- `demo.sh` flags that loudly rather than silently
+folding it into one bucket, since it would mean the demo is showing
+something nobody can explain.
 
 ## A non-obvious gotcha found while building this: `sshd -T` resolves the *first* occurrence of a repeated directive, not the last
 
@@ -147,7 +191,7 @@ already resolved), not by `cat`-ing `sshd_config` and parsing text --
 deliberate, so a directive left at its secure OpenSSH default (never set
 explicitly) still reads correctly (see that module's own comment). One
 consequence that isn't obvious from that comment alone, and that
-`scripts/quickdemo/misconfig_catalog.py`'s sshd recipes depend on getting
+`scripts/demo/misconfig_catalog.py`'s sshd recipes depend on getting
 right: when a directive appears **twice** in `sshd_config`, real `sshd`
 uses the **first** occurrence and silently ignores the second -- confirmed
 empirically (appending a second `PermitRootLogin yes` line below an
