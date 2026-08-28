@@ -3,7 +3,13 @@ import json
 
 import pytest
 
-from invariant.source import KNOWN_CIS_DOCUMENTS, CIS, _extract_jss_state
+from invariant.source import (
+    KNOWN_CIS_DOCUMENTS,
+    CIS,
+    _document_slug,
+    _extract_jss_state,
+    _parse_catalog_benchmarks,
+)
 
 _FIXTURE_STATE = {
     "sitecore": {
@@ -179,3 +185,59 @@ def test_find_benchmark_resolves_every_known_document(document_name):
     # we asked for is the version we got back.
     assert metadata.title
     assert metadata.benchmark_version == entry["benchmark_version"]
+
+
+def test_document_slug_supports_debian_ubuntu_and_stig():
+    assert _document_slug("Debian Linux", "CIS Debian Linux 13 Benchmark") == "debian_linux_13"
+    assert (
+        _document_slug("Ubuntu Linux", "CIS Ubuntu Linux 24.04 LTS STIG Benchmark")
+        == "ubuntu_linux_24_04_stig"
+    )
+
+
+def test_parse_catalog_benchmarks_keeps_every_pdf_version():
+    rows = [
+        {
+            "title": "CIS Debian Linux 13 Benchmark",
+            "technology_version": "13",
+            "version": "1.1.0",
+            "published": "2026-08-27 01:30:35",
+            "documents": [
+                {
+                    "id": 70179,
+                    "pardot-id": "/l/799323/example",
+                    "filename": "CIS_Debian_Linux_13_Benchmark_v1.1.0.pdf",
+                }
+            ],
+        },
+        {
+            "title": "CIS Debian Linux 13 Benchmark",
+            "technology_version": "13",
+            "version": "1.0.0",
+            "published": "2026-01-01 00:00:00",
+            "documents": [
+                {
+                    "id": 70000,
+                    "pardot-id": "/l/799323/old",
+                    "filename": "CIS_Debian_Linux_13_Benchmark_v1.0.0.pdf",
+                }
+            ],
+        },
+    ]
+
+    benchmarks = _parse_catalog_benchmarks("Debian Linux", rows)
+
+    assert [item.benchmark_version for item in benchmarks] == ["1.1.0", "1.0.0"]
+    assert {item.document_slug for item in benchmarks} == {"debian_linux_13"}
+    assert benchmarks[0].document_id == 70179
+    assert benchmarks[0].download_url == "https://learn.cisecurity.org/l/799323/example"
+
+
+@pytest.mark.integration
+def test_discover_benchmarks_crawls_only_monitored_linux_products():
+    benchmarks = CIS().discover_benchmarks()
+
+    assert benchmarks
+    assert {item.product_label for item in benchmarks} == {"Debian Linux", "Ubuntu Linux"}
+    assert all(item.file_name.lower().endswith(".pdf") for item in benchmarks)
+    assert all(item.pardot_path.startswith("/l/") for item in benchmarks)

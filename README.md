@@ -128,7 +128,15 @@ invariant extract cis-debian-linux-10      # faz o parse do PDF e persiste extra
 invariant import_document cis-debian-linux-10   # normaliza extracted_items em controls
 ```
 
-Documentos disponíveis: qualquer chave de `source.KNOWN_CIS_DOCUMENTS` (`src/invariant/source/__init__.py`), ex. `cis-debian-linux-9` ... `cis-debian-linux-13`, `cis-ubuntu-linux-12-04` ... `cis-ubuntu-linux-24-04-stig`.
+Para rastrear e baixar **todos os PDFs Debian e Ubuntu atualmente publicados** no catálogo público do CIS:
+
+```bash
+invariant fetch cis
+```
+
+O crawler descobre produtos, documentos e versões diretamente em `downloads.cisecurity.org`; não usa login nem depende das versões fixadas para a quickdemo. Os artefatos são preservados por SHA-256, portanto versões e conteúdos diferentes coexistem sem sobrescrever o histórico.
+
+Também é possível buscar apenas a versão mais recente de um documento conhecido, por exemplo `invariant fetch cis-debian-linux-13`. As chaves compatíveis ficam em `source.KNOWN_CIS_DOCUMENTS` (`src/invariant/source/__init__.py`).
 
 Rodar a avaliação (demo bxsec) contra os containers Docker-alvo:
 ```bash

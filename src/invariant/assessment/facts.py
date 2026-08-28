@@ -60,6 +60,19 @@ _MARKER_OS_RELEASE = "===OS_RELEASE==="
 _MARKER_SSHD_CONFIG = "===SSHD_CONFIG==="
 _MARKER_STAT_PREFIX = "===STAT:"
 
+# Enumerates every /etc/passwd account's home directory + the dotfiles
+# directly inside it, in one pass -- backs the "local interactive user home
+# directories"/"dot files access" checks, which need per-user dynamic paths
+# _STAT_PATHS can't express (that list is fixed). Deliberately does *not*
+# pre-filter to "interactive" users here (that needs /etc/shells, already
+# its own text block) -- it just stats every account's home and lets
+# assessment/__init__.py's _local_interactive_users() decide which rows are
+# relevant, same "collect broadly, filter in evaluate()" split as the rest
+# of this module. A home directory that doesn't exist (`[ -d "$h" ]` false)
+# simply emits no HOME line for that user -- evaluate() treats a missing
+# entry as "home doesn't exist", it's not a collection error.
+_INTERACTIVE_USER_FILES_CMD = """awk -F: '{print $1, $6}' /etc/passwd | while read -r u h; do [ -n "$h" ] && [ -d "$h" ] || continue; stat -Lc "HOME $u %U %G %a $h" "$h"; find "$h" -maxdepth 1 -type f -name '.*' 2>/dev/null | while read -r f; do stat -Lc "DOT $u %U %G %a $(basename "$f")" "$f"; done; done"""
+
 # (SystemFacts attribute name, output marker, shell command). Read as plain
 # text -- each check does its own parsing/grepping over the raw content,
 # same as sshd_config was before it got a dedicated parser. A file that
@@ -79,13 +92,138 @@ _TEXT_BLOCKS = [
     ("hosts_allow_text", "===HOSTS_ALLOW===", "cat /etc/hosts.allow 2>&1"),
     ("hosts_deny_text", "===HOSTS_DENY===", "cat /etc/hosts.deny 2>&1"),
     ("installed_packages_text", "===INSTALLED_PACKAGES===", "dpkg-query -W -f='${Package}\\n' 2>&1"),
-    ("pwquality_text", "===PWQUALITY===", "cat /etc/security/pwquality.conf 2>&1"),
+    # /etc/security/pwquality.conf.d/*.conf is part of the real audit for
+    # "Ensure password quality checking is enforced" (Group U below) --
+    # pwquality reads the base file then the conf.d dir, later values
+    # winning, so concatenating both here (missing dir just yields its own
+    # `cat` error text, same established pattern) keeps parse_pwquality_conf()
+    # accurate for every check that already reads this field, not just the
+    # new one.
+    ("pwquality_text", "===PWQUALITY===", "cat /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf 2>&1"),
     ("pwhistory_text", "===PWHISTORY===", "cat /etc/security/pwhistory.conf 2>&1"),
+    ("faillock_text", "===FAILLOCK===", "cat /etc/security/faillock.conf 2>&1"),
     ("sudoers_text", "===SUDOERS===", "cat /etc/sudoers 2>&1"),
     ("shells_text", "===SHELLS===", "cat /etc/shells 2>&1"),
     ("rsyslog_text", "===RSYSLOG===", "cat /etc/rsyslog.conf 2>&1"),
     ("journald_text", "===JOURNALD===", "cat /etc/systemd/journald.conf 2>&1"),
     ("audit_rules_text", "===AUDIT_RULES===", "cat /etc/audit/rules.d/*.rules /etc/audit/audit.rules 2>&1"),
+    (
+        "kernel_modules_text",
+        "===KERNEL_MODULES===",
+        "find /lib/modules -mindepth 1 2>&1; echo '---MODPROBE---'; modprobe --showconfig 2>&1; "
+        "echo '---LSMOD---'; lsmod 2>&1",
+    ),
+    ("pam_su_text", "===PAM_SU===", "cat /etc/pam.d/su 2>&1"),
+    # The real audit for "Ensure root user umask is configured" checks
+    # different file pairs by document (/root/.bash_profile + /root/.bashrc
+    # on debian_linux_11/ubuntu_linux_20_04; /root/.profile + /root/.bashrc
+    # on every other real target document) -- concatenating all three here
+    # avoids per-document branching in facts.py; a missing file just yields
+    # its `cat` error text, same established pattern as every other block.
+    ("root_shell_startup_text", "===ROOT_SHELL_STARTUP===", "cat /root/.bash_profile /root/.profile /root/.bashrc 2>&1"),
+    # The next 3 are full-filesystem `find` scans, not fixed-path reads --
+    # a different kind of collection than every block above. A container
+    # only has one real mount point (confirmed empirically: `findmnt -Dkerno
+    # fstype,target` never lists "/" itself in a container -- the real
+    # audit's own mount-enumeration loop would silently scan nothing), so
+    # these run `find / -xdev ...` directly instead of the real audit's
+    # findmnt-driven multi-mount loop; `-xdev` alone already keeps the scan
+    # from crossing into bind-mounted/pseudo filesystems (/proc, /sys,
+    # /dev, ...), which is all the real loop is for on a full VM. Timed at
+    # ~150-220ms each against a bare debian:12 container -- well inside the
+    # existing 10s timeout, no bump needed.
+    (
+        "world_writable_text",
+        "===WORLD_WRITABLE===",
+        r"find / -xdev \( -path '/run/user/*' -o -path '/proc/*' -o -path '*/containerd/*' "
+        r"-o -path '*/kubelet/*' -o -path '/sys/*' -o -path '/snap/*' \) -prune -o "
+        r"\( -type f -o -type d \) -perm -0002 -printf '%y:%m:%p\n' 2>&1",
+    ),
+    (
+        "unowned_text",
+        "===UNOWNED===",
+        r"find / -xdev \( -path '/run/user/*' -o -path '/proc/*' -o -path '*/containerd/*' "
+        r"-o -path '*/kubelet/pods/*' -o -path '*/kubelet/plugins/*' -o -path '/sys/fs/cgroup/memory/*' "
+        r"-o -path '/var/*/private/*' \) -prune -o \( -type f -o -type d \) \( -nouser -o -nogroup \) "
+        r"-printf '%y:%u:%g:%p\n' 2>&1",
+    ),
+    # Root's real PATH, the way an interactive root login shell would see
+    # it (the real audit reads it via `sudo -Hiu root env`/`sudo su - root
+    # -c env`; collection already executes as root inside the target via
+    # `docker exec`, and `sudo` isn't installed on 3 of the 6 real target
+    # documents' matching containers -- so this spawns root's own login
+    # shell directly instead, `bash -l`, which sources /etc/profile and
+    # root's own profile/rc chain -- unlike a plain `sh -c` that sources
+    # nothing). First line of output is the raw PATH string; each
+    # following line reports one ':'-separated component in order
+    # (`DIR:<path>:mode=.. uid=.. gid=.. gname=..` if it's a directory that
+    # exists, `NODIR:<path>` otherwise, `<path>` empty for a "::" or
+    # trailing ":" component) -- awk's `-F:` split (unlike shell word
+    # splitting) preserves empty fields the same way Python's `str.split(
+    # ":")` does, so the two line up positionally.
+    (
+        "root_path_probe_text",
+        "===ROOT_PATH_PROBE===",
+        "l_rp=\"$(bash -l -c 'echo $PATH' 2>&1)\"; printf '%s\\n' \"$l_rp\"; "
+        "printf '%s\\n' \"$l_rp\" | awk -F: '{for(i=1;i<=NF;i++) print $i}' | "
+        "while IFS= read -r l_p; do "
+        "if [ -n \"$l_p\" ] && [ -d \"$l_p\" ]; then printf 'DIR:%s:' \"$l_p\"; "
+        "stat -Lc 'mode=%a uid=%u gid=%g gname=%G' \"$l_p\" 2>&1; "
+        "else printf 'NODIR:%s\\n' \"$l_p\"; fi; done",
+    ),
+    # Real audit for "Ensure auditing for processes that start prior to
+    # auditd is enabled" (Group U below), run close to verbatim: `find
+    # /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} +
+    # | grep -v 'audit=1'` should return nothing. A container has no
+    # /boot/grub/grub.cfg at all -- `find` matches zero files, the whole
+    # pipe naturally produces no output, same vacuous-PASS precedent as
+    # the kernel-module checks above (grep against something that isn't
+    # there correctly reports "nothing to flag").
+    (
+        "boot_grub_audit_text",
+        "===BOOT_GRUB_AUDIT===",
+        r"find /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} + 2>/dev/null | grep -v 'audit=1' 2>&1",
+    ),
+    ("interactive_user_files_text", "===INTERACTIVE_USER_FILES===", _INTERACTIVE_USER_FILES_CMD),
+    # auditd.conf directives + the file-system evidence the 10 Group A (per
+    # checks-backlog.md) auditd.conf-family checks need: the config files
+    # under /etc/audit/ (mode), the audit log directory + the files in it
+    # (mode/owner/group -- the directory is derived from auditd.conf's own
+    # `log_file` directive via `dirname`, the same way the real CIS audit
+    # scripts do it, not hardcoded, in case a real target ever overrides
+    # it), and a fixed set of audit tool binaries (mode). One shell command,
+    # 4 sections separated by their own markers (same "one text field, self-
+    # parsed sub-markers" shape as kernel_modules_text above).
+    #
+    # The tool list is 5 binaries (auditctl, aureport, ausearch, auditd,
+    # augenrules), not the 6 a real audit script usually lists -- confirmed
+    # via Postgres that debian_linux_13's own script for "Ensure audit tools
+    # mode is configured" drops /sbin/autrace from its array entirely (the
+    # other 5 real target documents keep it); checking a fixed 6-tool list
+    # would either wrongly fail debian_13 targets its own document doesn't
+    # require autrace from, or (if autrace were dropped everywhere) under-
+    # check the other 5 documents. This 5-tool intersection is exactly
+    # debian_13's own real condition, and a faithful (if partial) subset of
+    # the other 5's -- same kind of reduced-but-real subset already used by
+    # Group I's _AUDIT_TOOL_PATHS above, for the same reason.
+    (
+        "audit_conf_text",
+        "===AUDIT_CONF===",
+        "cat /etc/audit/auditd.conf 2>&1; echo '---CONFFILES---'; "
+        "find /etc/audit/ -type f \\( -name '*.conf' -o -name '*.rules' \\) "
+        "-printf 'mode=%m uid=%U gid=%G gname=%g path=%p\\n' 2>&1; "
+        "echo '---LOGDIR---'; "
+        "l_dir=\"$(dirname \"$(awk -F= '$1 ~ /^[[:space:]]*log_file[[:space:]]*$/ "
+        "{print $2}' /etc/audit/auditd.conf 2>/dev/null | xargs 2>/dev/null)\" 2>/dev/null)\"; "
+        "if [ -n \"$l_dir\" ] && [ -d \"$l_dir\" ]; then "
+        "stat -Lc 'mode=%a uid=%u gid=%g gname=%G path=%n' \"$l_dir\" 2>&1; "
+        "echo '---LOGFILES---'; "
+        "find \"$l_dir\" -maxdepth 1 -type f -printf 'mode=%m uid=%U gid=%G gname=%g path=%p\\n' 2>&1; "
+        "else echo 'LOGDIR_NOT_FOUND'; echo '---LOGFILES---'; fi; "
+        "echo '---TOOLS---'; "
+        "stat -Lc 'mode=%a uid=%u gid=%g gname=%G path=%n' /sbin/auditctl /sbin/aureport "
+        "/sbin/ausearch /sbin/auditd /sbin/augenrules 2>&1",
+    ),
 ]
 
 
@@ -146,11 +284,21 @@ class SystemFacts:
     installed_packages: set[str] = field(default_factory=set)
     pwquality_text: str = ""
     pwhistory_text: str = ""
+    faillock_text: str = ""
     sudoers_text: str = ""
     shells_text: str = ""
     rsyslog_text: str = ""
     journald_text: str = ""
     audit_rules_text: str = ""
+    kernel_modules_text: str = ""
+    pam_su_text: str = ""
+    root_shell_startup_text: str = ""
+    world_writable_text: str = ""
+    unowned_text: str = ""
+    root_path_probe_text: str = ""
+    boot_grub_audit_text: str = ""
+    interactive_user_files_text: str = ""
+    audit_conf_text: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -265,11 +413,21 @@ def _parse_collect_output(output: str) -> SystemFacts:
         installed_packages=_parse_installed_packages(text_values["installed_packages_text"]),
         pwquality_text=text_values["pwquality_text"],
         pwhistory_text=text_values["pwhistory_text"],
+        faillock_text=text_values["faillock_text"],
         sudoers_text=text_values["sudoers_text"],
         shells_text=text_values["shells_text"],
         rsyslog_text=text_values["rsyslog_text"],
         journald_text=text_values["journald_text"],
         audit_rules_text=text_values["audit_rules_text"],
+        kernel_modules_text=text_values["kernel_modules_text"],
+        pam_su_text=text_values["pam_su_text"],
+        root_shell_startup_text=text_values["root_shell_startup_text"],
+        world_writable_text=text_values["world_writable_text"],
+        unowned_text=text_values["unowned_text"],
+        root_path_probe_text=text_values["root_path_probe_text"],
+        boot_grub_audit_text=text_values["boot_grub_audit_text"],
+        interactive_user_files_text=text_values["interactive_user_files_text"],
+        audit_conf_text=text_values["audit_conf_text"],
     )
 
 
