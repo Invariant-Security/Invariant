@@ -22,13 +22,28 @@ jobs:
           # safe.directory: o runner roda como root e o repo tem .git de outro dono (victor)
           git config --global --add safe.directory "$SRC_DIR"
           cd "$SRC_DIR"
+          OLD_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+          echo "OLD_SHA=$OLD_SHA" >> "$GITHUB_ENV"
           git fetch "https://x-access-token:${{ github.token }}@github.com/${REPO}.git" main
           git reset --hard FETCH_HEAD
 
-      - name: Rebuild e subir os containers (aguarda ficar healthy)
+      # api e web sao containers independentes (sem depends_on entre eles) --
+      # so reconstroi o(s) que realmente mudou, pra um push so no frontend
+      # nao derrubar/reconstruir o backend (e vice-versa), e pra uma falha
+      # de build de um lado nao bloquear um deploy do outro lado que nao
+      # tinha nada a ver. Ver deploy/detect_changed_services.sh.
+      - name: Descobrir quais servicos mudaram
+        id: changed
         run: |
           cd "$SRC_DIR"
-          docker compose -f deploy/docker-compose.prod.yml up -d --build --wait --wait-timeout 180
+          SERVICES="$(deploy/detect_changed_services.sh "$OLD_SHA" "$(git rev-parse HEAD)")"
+          echo "services=$SERVICES" >> "$GITHUB_OUTPUT"
+
+      - name: Rebuild e subir os containers (aguarda ficar healthy)
+        if: steps.changed.outputs.services != ''
+        run: |
+          cd "$SRC_DIR"
+          docker compose -f deploy/docker-compose.prod.yml up -d --build --wait --wait-timeout 180 ${{ steps.changed.outputs.services }}
 
       - name: Logs em caso de falha
         if: failure()
