@@ -89,12 +89,19 @@ async function fetchJson(path) {
 }
 
 // Sums a report's per-container PASS/FAIL/NOT ASSESSED into the totals the
-// Hero and Assessment History rows show -- FAIL only counts real
-// misconfigurations (data.story), never structural gaps. `controls` reuses
-// total_findings from any one target, since every target runs the same
-// check set (report.py's build_report() confirms this: one CHECKS list,
-// looked up per target's detected document).
+// Hero and Assessment History rows show. Demo reports (report.is_demo,
+// default true for older runs.jsonl entries that predate this field) keep
+// the original split -- FAIL only counts intentional misconfigs
+// (data.story), everything else structural/unaccounted-for is "not
+// assessed". A real-environment report has no misconfig story at all
+// (data.story is always empty there -- see report.py's build_report()
+// docstring), so its real FAILs live in data.unexplained instead; counting
+// those as "not assessed" would hide every actual finding behind a vague
+// label. `controls` reuses total_findings from any one target, since every
+// target runs the same check set (report.py's build_report() confirms
+// this: one CHECKS list, looked up per target's detected document).
 function aggregateReport(report) {
+  const isDemo = report.is_demo ?? true
   let pass = 0
   let fail = 0
   let notAssessed = 0
@@ -104,9 +111,9 @@ function aggregateReport(report) {
   for (const name of report.targets) {
     const data = report.containers[name]
     pass += data.pass_count
-    fail += data.story.length
-    notAssessed += data.environmental.length + data.unexplained.length
-    unexplainedTotal += data.unexplained.length
+    fail += isDemo ? data.story.length : data.story.length + data.unexplained.length
+    notAssessed += isDemo ? data.environmental.length + data.unexplained.length : data.environmental.length
+    if (isDemo) unexplainedTotal += data.unexplained.length
     for (const f of [...data.story, ...data.environmental, ...data.unexplained]) {
       documents.set(`${f.document_name}@${f.document_version}`, {
         name: f.document_name,
@@ -117,7 +124,16 @@ function aggregateReport(report) {
 
   const controls = report.targets.length > 0 ? report.containers[report.targets[0]].total_findings : 0
 
-  return { pass, fail, notAssessed, targets: report.targets.length, controls, unexplainedTotal, documents: [...documents.values()] }
+  return {
+    pass,
+    fail,
+    notAssessed,
+    targets: report.targets.length,
+    controls,
+    unexplainedTotal,
+    isDemo,
+    documents: [...documents.values()],
+  }
 }
 
 function useTicker(enabled) {
@@ -237,12 +253,12 @@ function HeroAssessment({ run }) {
       )}
       <div className="stat-row">
         <StatChip label="Controls Passing" value={agg.pass} tone="pass" />
-        <StatChip label="Misconfigurations" value={agg.fail} tone="fail" />
-        <StatChip label="Not Assessed" value={agg.notAssessed} tone="na" />
+        <StatChip label={agg.isDemo ? 'Misconfigurations' : 'Failed'} value={agg.fail} tone="fail" />
+        <StatChip label={agg.isDemo ? 'Not Assessed' : 'Not Applicable'} value={agg.notAssessed} tone="na" />
         <StatChip label="Targets" value={agg.targets} tone="neutral" />
         <StatChip label="Controls" value={agg.controls} tone="neutral" />
       </div>
-      {agg.unexplainedTotal > 0 && (
+      {agg.isDemo && agg.unexplainedTotal > 0 && (
         <p className="hero__warning">
           ⚠ {agg.unexplainedTotal} unexplained result(s) &mdash; neither a known structural gap
           nor a demo misconfiguration. Worth a look.
@@ -277,34 +293,44 @@ function StatusLegend() {
   )
 }
 
-function TargetCard({ name, data, onViewFindings }) {
-  const isClean = data.story.length === 0
-  const notAssessed = data.environmental.length + data.unexplained.length
+function TargetCard({ name, data, isDemo, onViewFindings }) {
+  const failCount = isDemo ? data.story.length : data.story.length + data.unexplained.length
+  const notAssessed = isDemo ? data.environmental.length + data.unexplained.length : data.environmental.length
+  const isClean = failCount === 0
   return (
     <div className={`target-card ${isClean ? 'target-card--clean' : 'target-card--flagged'}`}>
       <div className="target-card__title mono">{name}</div>
       <div className="card__counts">
         <span className="badge badge--pass">{data.pass_count} PASS</span>
-        <span className="badge badge--fail">{data.story.length} FAIL</span>
-        <span className="badge badge--na">{notAssessed} NOT ASSESSED</span>
+        <span className="badge badge--fail">{failCount} FAIL</span>
+        <span className="badge badge--na">{notAssessed} {isDemo ? 'NOT ASSESSED' : 'N/A'}</span>
       </div>
       <div className="card__breakdown">
         <div className="card__row">
-          <span>Structural gaps</span>
+          <span>{isDemo ? 'Structural gaps' : 'Not applicable'}</span>
           <strong>{data.environmental.length}</strong>
         </div>
-        <div className="card__row">
-          <span>Misconfigurations</span>
-          <strong>{data.story.length}</strong>
-        </div>
-        {data.unexplained.length > 0 && (
-          <div className="card__row card__row--warning">
-            <span>Unexplained</span>
-            <strong>{data.unexplained.length}</strong>
+        {isDemo ? (
+          <>
+            <div className="card__row">
+              <span>Misconfigurations</span>
+              <strong>{data.story.length}</strong>
+            </div>
+            {data.unexplained.length > 0 && (
+              <div className="card__row card__row--warning">
+                <span>Unexplained</span>
+                <strong>{data.unexplained.length}</strong>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="card__row">
+            <span>Failed</span>
+            <strong>{failCount}</strong>
           </div>
         )}
       </div>
-      {data.story.length > 0 && (
+      {isDemo && data.story.length > 0 && (
         <p className="target-card__flag">
           ⚠ {data.story.length} intentional demo finding{data.story.length === 1 ? '' : 's'}
         </p>
@@ -318,10 +344,11 @@ function TargetCard({ name, data, onViewFindings }) {
 
 function TargetGrid({ report, onViewFindings }) {
   if (!report) return null
+  const isDemo = report.is_demo ?? true
   return (
     <div className="card-grid">
       {report.targets.map((name) => (
-        <TargetCard key={name} name={name} data={report.containers[name]} onViewFindings={onViewFindings} />
+        <TargetCard key={name} name={name} data={report.containers[name]} isDemo={isDemo} onViewFindings={onViewFindings} />
       ))}
     </div>
   )
@@ -361,8 +388,14 @@ function FindingListItem({ finding, onSelect }) {
   )
 }
 
-function TargetDetail({ name, data, onSelectFinding, onBack }) {
-  const notAssessed = data.environmental.length + data.unexplained.length
+function TargetDetail({ name, data, isDemo, onSelectFinding, onBack }) {
+  // Real targets have no misconfig story at all (data.story is always
+  // empty -- see report.py's build_report() docstring), so every real FAIL
+  // lives in data.unexplained; folded together here into one plain
+  // "Failed" list instead of the demo's 3-way split, which only makes
+  // sense once a rehearsed story exists to compare against.
+  const failed = isDemo ? data.story : [...data.story, ...data.unexplained]
+  const notAssessed = isDemo ? data.environmental.length + data.unexplained.length : data.environmental.length
   return (
     <div className="target-detail">
       <button type="button" className="link-btn" onClick={onBack}>
@@ -372,11 +405,11 @@ function TargetDetail({ name, data, onSelectFinding, onBack }) {
       {ENDPOINT_INFO[name] && <p className="hint container-detail__role">{ENDPOINT_INFO[name]}</p>}
       <div className="card__counts">
         <span className="badge badge--pass">{data.pass_count} PASS</span>
-        <span className="badge badge--fail">{data.story.length} FAIL</span>
-        <span className="badge badge--na">{notAssessed} NOT ASSESSED</span>
+        <span className="badge badge--fail">{failed.length} FAIL</span>
+        <span className="badge badge--na">{notAssessed} {isDemo ? 'NOT ASSESSED' : 'N/A'}</span>
       </div>
 
-      {data.unexplained.length > 0 && (
+      {isDemo && data.unexplained.length > 0 && (
         <>
           <h4 className="finding-group finding-group--warning">Unexplained ({data.unexplained.length})</h4>
           <ul className="finding-list">
@@ -387,11 +420,11 @@ function TargetDetail({ name, data, onSelectFinding, onBack }) {
         </>
       )}
 
-      {data.story.length > 0 && (
+      {failed.length > 0 && (
         <>
-          <h4 className="finding-group">Misconfigurations ({data.story.length})</h4>
+          <h4 className="finding-group">{isDemo ? `Misconfigurations (${failed.length})` : `Failed (${failed.length})`}</h4>
           <ul className="finding-list">
-            {byLevel(data.story).map((f) => (
+            {byLevel(failed).map((f) => (
               <FindingListItem key={f.external_id} finding={f} onSelect={onSelectFinding} />
             ))}
           </ul>
@@ -401,7 +434,7 @@ function TargetDetail({ name, data, onSelectFinding, onBack }) {
       {data.environmental.length > 0 && (
         <details className="finding-details">
           <summary>
-            Not assessed ({data.environmental.length}){' '}
+            {isDemo ? 'Not assessed' : 'Not applicable'} ({data.environmental.length}){' '}
             <span className="info-icon" title={STRUCTURAL_GAP_EXPLANATION} aria-label={STRUCTURAL_GAP_EXPLANATION}>
               ⓘ
             </span>
@@ -419,12 +452,17 @@ function TargetDetail({ name, data, onSelectFinding, onBack }) {
 
 function RecentFindings({ report, onSelectFinding }) {
   if (!report) return null
-  const findings = byLevel(report.targets.flatMap((name) => report.containers[name].story))
+  const isDemo = report.is_demo ?? true
+  const source = (name) =>
+    isDemo ? report.containers[name].story : [...report.containers[name].story, ...report.containers[name].unexplained]
+  const findings = byLevel(report.targets.flatMap(source))
   if (findings.length === 0) {
     return (
       <section>
         <h2>Recent Findings</h2>
-        <p className="hint">No misconfigurations in this run &mdash; every intentional demo finding was clean.</p>
+        <p className="hint">
+          {isDemo ? 'No misconfigurations in this run — every intentional demo finding was clean.' : 'No findings — every control passed.'}
+        </p>
       </section>
     )
   }
@@ -737,6 +775,7 @@ export default function App() {
             <TargetDetail
               name={selectedTarget.name}
               data={selectedTarget.report.containers[selectedTarget.name]}
+              isDemo={selectedTarget.report.is_demo ?? true}
               onSelectFinding={openFinding}
               onBack={backToTargets}
             />
@@ -760,6 +799,7 @@ export default function App() {
             <TargetDetail
               name={selectedTarget.name}
               data={selectedTarget.report.containers[selectedTarget.name]}
+              isDemo={selectedTarget.report.is_demo ?? true}
               onSelectFinding={openFinding}
               onBack={backToTargets}
             />
