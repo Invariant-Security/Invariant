@@ -39,12 +39,25 @@ def _finding_dict(finding: Finding) -> dict:
     return asdict(finding)
 
 
-def build_report(targets: list[str], manifest_path: Path = DEFAULT_MANIFEST_PATH) -> dict:
+def build_report(targets: list[str], manifest_path: Path = DEFAULT_MANIFEST_PATH, is_demo: bool = True) -> dict:
     """Assesses `targets` and classifies every FAIL into environmental /
     story / unexplained -- the same three-way split demo.sh's old step 9
     heredoc computed inline. `targets[0]` is treated as the hardened
     baseline by print_report() only; assess_targets() itself doesn't care
     about target order.
+
+    `is_demo` is pure metadata, read only by the frontend (App.jsx's
+    aggregateReport()/TargetCard/TargetDetail) to decide how to *present*
+    this same data -- it changes nothing about how findings are computed
+    or classified here. The three-way split above is a demo-narrative
+    concept (did today's rehearsed misconfig story hold up?) that doesn't
+    describe a real client target at all: "story" is always empty there
+    (no manifest entry ever applies), so a real FAIL always lands in
+    "unexplained" by construction, and a naive UI showing "Misconfigurations:
+    0" next to "Unexplained: 86" reads as if the tool is confused rather
+    than reporting real findings. Default True (unchanged for demo.sh's own
+    calls); callers assessing a real environment (not this repo's demo
+    containers) should pass False.
 
     Returns a JSON-serializable dict:
         {
@@ -110,6 +123,7 @@ def build_report(targets: list[str], manifest_path: Path = DEFAULT_MANIFEST_PATH
         "targets": list(targets),
         "containers": containers,
         "unexplained_total": unexplained_total,
+        "is_demo": is_demo,
     }
 
 
