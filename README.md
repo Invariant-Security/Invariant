@@ -138,6 +138,17 @@ O crawler descobre produtos, documentos e versões diretamente em `downloads.cis
 
 Também é possível buscar apenas a versão mais recente de um documento conhecido, por exemplo `invariant fetch cis-debian-linux-13`. As chaves compatíveis ficam em `source.KNOWN_CIS_DOCUMENTS` (`src/invariant/source/__init__.py`).
 
+`invariant extract` aceita tanto uma chave de `KNOWN_CIS_DOCUMENTS` (`cis-debian-linux-10`) quanto o `document_slug` bruto (`debian_linux_13`) de qualquer artefato já baixado por `invariant fetch cis` -- `KNOWN_CIS_DOCUMENTS` não é mais autoridade sobre o que pode ser extraído, só sobre os aliases de CLI mais legíveis.
+
+### ⚠️ Limitações conhecidas do parser CIS
+
+- **Cobertura**: parser genérico único, sem perfis por distribuição/formato -- a matriz de caracterização (`docs/cis_characterization_report.json`, `docs/decisions/cis-parser-characterization.md`) não encontrou divergência de layout real entre os 18 PDFs Debian/Ubuntu (normal e STIG) disponíveis, então nenhum perfil editorial foi construído. Decisão em aberto: revisitar com evidência se um documento futuro divergir de verdade.
+- **Fail-closed**: `extract_and_validate()` recusa (não persiste parcialmente) um documento sem nenhuma recomendação, com IDs duplicados, ou com `external_id`/`title`/`description`/`audit`/`remediation` vazio em qualquer recomendação. `rationale` vazio é um aviso, não uma falha -- acontece de verdade em alguns documentos reais mais novos.
+- **Regressão de contagem**: `invariant extract` recusa persistir uma extração com menos recomendações do que a `document_version` anterior do mesmo documento (inclusive um reprocessamento do mesmo `publisher_version` com parser mudado) -- toda a história de versões CIS Debian/Ubuntu observada até agora só cresce.
+- **Proveniência por página**: cada recomendação carrega `source_page_start`/`source_page_end` (1-based) em `extracted_items.raw_data`, mas não trechos/hashes de evidência textual (marcado como opcional no plano, sem necessidade demonstrada ainda).
+- **`parser_version`**: persistido em `document_versions.parser_version`, independente de `publisher_version`/`collector_version`. Não há hoje nenhuma lógica de "pular se já processado" em `invariant extract` -- todo reprocessamento é sempre completo, então uma mudança de parser é capturada automaticamente na próxima execução.
+- **Desempenho**: nenhum PDF Debian/Ubuntu observado até agora passa de ~31s de extração single-pass (o pior caso, CIS Debian Linux 11 STIG, tem 1192 páginas). Uma observação anterior de "custo muito maior" era um artefato de instrumentação (`tracemalloc`), não do documento -- ver o decision doc.
+
 Rodar a avaliação (demo bxsec) contra os containers Docker-alvo:
 ```bash
 invariant assess

@@ -94,3 +94,37 @@ família nova, ou uma versão STIG com estrutura visivelmente diferente -- por e
 Debian 11 STIG tivesse de fato se mostrado estruturalmente distinto, e não apenas com mais
 páginas) mostrar divergência real, revisitar com uma fixture mínima provando a
 necessidade, exatamente como a Fase 5 do plano exige.
+
+## O que foi construído em cima dessa evidência (Fases 2, 3, 4 e 6)
+
+Commits separados, um por fase, no mesmo branch:
+
+- **Fase 2 (contrato fail-closed)**: `extractor.extract_and_validate()` recusa (nunca
+  persiste parcialmente) um documento sem nenhuma recomendação, com IDs duplicados, ou
+  com um campo obrigatório (`external_id`/`title`/`description`/`audit`/`remediation`)
+  vazio -- todos com 0 ocorrências reais nos 18 documentos desta caracterização, então
+  tratados como falha real, não normalização silenciosa. `rationale` vazio é aviso, não
+  falha (ocorre de verdade, ver acima). `invariant.cli.extract` ganhou também uma
+  verificação de regressão de contagem contra a `document_version` anterior do mesmo
+  documento, e rollback explícito em qualquer falha.
+- **Fase 3 (proveniência por página)**: `source_page_start`/`source_page_end` em cada
+  `ExtractedRecommendation`, propagados para `extracted_items.raw_data`.
+- **Fase 4 (robustez)**: achado real ao ligar os campos preservados (`Default
+  Value`/`References`/`CIS Controls`/`Impact`) -- a última recomendação de um documento
+  não tinha cabeçalho seguinte para limitar seu corpo, então absorvia o apêndice inteiro
+  (confirmado: ~17KB do apêndice "Change History" dentro do campo CIS Controls da
+  recomendação 6.2.20 do Debian 10 v1.0.0, e o intervalo de páginas dela ia até a última
+  página do documento). Corrigido cortando o corpo antes de qualquer linha
+  `Appendix: <nome>` -- confirmado em 3 documentos reais antes de virar a regra. Também
+  adicionado orçamento de tempo (120s, 4x acima do medido) para a extração do Debian 11
+  STIG na suíte de testes.
+- **Fase 6 (integração)**: `invariant extract` aceita qualquer `document_slug` já
+  baixado, não só chaves de `KNOWN_CIS_DOCUMENTS`; `document_versions.parser_version` é
+  persistido (`extractor.PARSER_VERSION`), independente de `publisher_version`. Não há
+  hoje nenhum "pular se já processado" em `invariant extract` para o item 3 do plano
+  (reprocessar quando o parser mudar) precisar contornar -- todo `extract` já reprocessa
+  por completo, então a mudança de parser já é capturada automaticamente na próxima
+  execução, sem código adicional.
+
+`pytest tests/extractor tests/cli/test_extract.py -q -m "not integration"`: 30 passed.
+`pytest -m "not integration" -q`: 406 passed.

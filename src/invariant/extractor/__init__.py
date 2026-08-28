@@ -7,6 +7,17 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
+# Bumped by hand whenever a change here could produce different extracted
+# output for the same PDF bytes (a header/section-detection rule, a new or
+# differently-populated field, ...) -- kept independent of publisher_version
+# and collector_version (PRD sec. 47/versioning: the three axes must never be
+# conflated) so cli.extract can tell "this document_version was persisted by
+# an older parser" apart from "the publisher republished this version".
+# "1.0.0" here marks the fail-closed contract + page provenance + appendix
+# fix + preserved-fields work (codexplan.md Fases 2-4) as the first tracked
+# parser version.
+PARSER_VERSION = "1.0.0"
+
 # Matches the start of a recommendation id line, e.g. "5.2.10 Ensure SSH...".
 # Deliberately loose -- long titles wrap across a line break in the PDF
 # text, so the scored/automated suffix isn't required here; see

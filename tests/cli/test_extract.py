@@ -68,9 +68,72 @@ def test_latest_raw_artifact_metadata_raises_when_missing(tmp_path, monkeypatch)
         extract_module._latest_raw_artifact_metadata(source="cis", document="debian_linux_10")
 
 
-def test_extract_rejects_unknown_document():
-    with pytest.raises(ValueError):
+def test_extract_rejects_a_document_with_no_fetched_raw_artifact():
+    """Fase 6 item 1: extract() no longer requires a KNOWN_CIS_DOCUMENTS
+    entry -- any document_slug is accepted, but it still has to have been
+    fetched at least once (there's no artifact to parse otherwise).
+    """
+    with pytest.raises(FileNotFoundError):
         extract_module.extract("not-a-real-document")
+
+
+def test_extract_accepts_a_document_slug_without_a_known_cis_documents_entry(monkeypatch):
+    """A document the crawler discovered and fetched (see
+    docs/decisions/cis-downloads-crawler.md) but that was never added to
+    KNOWN_CIS_DOCUMENTS must still be extractable -- KNOWN_CIS_DOCUMENTS is
+    no longer the authority for what extract() accepts.
+    """
+    calls = {}
+
+    def fake_latest_raw_artifact_metadata(**kwargs):
+        calls["metadata_kwargs"] = kwargs
+        return {
+            "source": "cis",
+            "document": "debian_linux_999",
+            "path": "/fake/path.pdf",
+            "version": "9.9.9",
+            "content_hash": "deadbeef",
+            "retrieved_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(extract_module, "_latest_raw_artifact_metadata", fake_latest_raw_artifact_metadata)
+    rec = ExtractedRecommendation(
+        external_id="1.1",
+        title="t",
+        scored=True,
+        profile_applicability=[],
+        description="d",
+        rationale="r",
+        audit="a",
+        remediation="rem",
+    )
+    monkeypatch.setattr(
+        extract_module.extractor,
+        "extract_and_validate",
+        lambda path: extractor.ExtractionResult(recommendations=[rec], warnings=[]),
+    )
+
+    class _FakeConn:
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(extract_module.db, "connect", lambda: _FakeConn())
+    monkeypatch.setattr(extract_module.db, "upsert_source", lambda conn, **kwargs: 1)
+    monkeypatch.setattr(extract_module.db, "upsert_document", lambda conn, **kwargs: 2)
+    monkeypatch.setattr(extract_module.db, "select_latest_document_version_id", lambda conn, **kwargs: None)
+    monkeypatch.setattr(extract_module.db, "upsert_document_version", lambda conn, **kwargs: 3)
+    monkeypatch.setattr(extract_module.db, "upsert_extracted_item", lambda conn, **kwargs: 1)
+
+    item_ids = extract_module.extract("debian_linux_999")  # not a KNOWN_CIS_DOCUMENTS key
+
+    assert item_ids == [1]
+    assert calls["metadata_kwargs"]["document"] == "debian_linux_999"
 
 
 def test_extract_wires_extractor_output_into_storage(monkeypatch, capsys):

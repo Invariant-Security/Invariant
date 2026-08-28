@@ -1,6 +1,11 @@
-# TODO: `invariant extract <document>` -- run the extractor over a stored raw artifact.
-# Only the documents in source.KNOWN_CIS_DOCUMENTS are wired up so far
-# (same scope as fetch.py).
+# `invariant extract <document>` -- run the extractor over a stored raw artifact.
+# `document` is either a KNOWN_CIS_DOCUMENTS CLI alias (e.g.
+# "cis-debian-linux-10", kept for backward compatibility and readability) or
+# a raw document_slug directly (e.g. "debian_linux_13") -- `invariant fetch
+# cis` already saves an artifact under its document_slug for every Debian/
+# Ubuntu PDF the live catalog has, whether or not that document has a
+# KNOWN_CIS_DOCUMENTS entry (codexplan.md Fase 6 item 1: KNOWN_CIS_DOCUMENTS
+# is no longer the authority for what extract() accepts).
 
 import json
 from dataclasses import asdict
@@ -13,11 +18,7 @@ from invariant.storage import postgres as db
 
 def extract(document: str):
     known = source.KNOWN_CIS_DOCUMENTS.get(document)
-    if known is None:
-        known_keys = ", ".join(source.KNOWN_CIS_DOCUMENTS)
-        raise ValueError(f"unknown document: {document!r} (known: {known_keys})")
-
-    document_slug = known["document_slug"]
+    document_slug = known["document_slug"] if known is not None else document
     metadata = _latest_raw_artifact_metadata(source="cis", document=document_slug)
     pdf_path = Path(metadata["path"])
 
@@ -68,6 +69,15 @@ def extract(document: str):
             content_hash=metadata["content_hash"],
             retrieved_at=metadata["retrieved_at"],
             raw_artifact_path=metadata["path"],
+            # Independent of publisher_version -- lets a future query tell
+            # "this document_version was extracted by an older parser" apart
+            # from "the publisher republished this version" (codexplan.md
+            # Fase 6 item 2). Re-running `extract` always re-parses and
+            # re-upserts unconditionally (no skip-if-already-done check
+            # exists anywhere in this CLI), so a parser change is already
+            # picked up on the next run -- item 3 falls out of item 2 for
+            # free, nothing else needed.
+            parser_version=extractor.PARSER_VERSION,
         )
 
         item_ids = []
