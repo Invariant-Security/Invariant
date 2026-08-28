@@ -90,6 +90,12 @@ Arquivos-chave:
   API REST ampla descrita no PRD.
 - Produção não inclui PostgreSQL no compose. A API lê `data/demo` montado
   como read-only; a atualização da demo ocorre separadamente no host.
+- `teste.invariantsec.org` é um segundo stack (`deploy/docker-compose.dev.yml`,
+  `.github/workflows/deploy-dev.yml`) rodando a branch `dev`, deployado num
+  checkout dedicado (`/srv/projects/publicado/invariant-dev`, nunca o mesmo
+  diretório usado como workspace) a cada push em `dev`. Lê o mesmo
+  `data/demo` da produção (mount por caminho absoluto) em vez de rodar o
+  pipeline de novo -- ver o comentário do próprio compose se isso divergir.
 
 ## Setup e comandos
 

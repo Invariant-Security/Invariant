@@ -1,0 +1,40 @@
+# Roda no self-hosted runner da VPS, em todo push na dev -- staging pra
+# teste.invariantsec.org, separado do stack sempre-ligado de main
+# (deploy.yml). Ver deploy/docker-compose.dev.yml pro porque do checkout
+# dedicado.
+name: deploy-dev
+
+on:
+  push:
+    branches: [dev]
+
+concurrency:
+  group: deploy-invariant-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy-dev
+    runs-on: [self-hosted, vps-prod]
+    env:
+      SRC_DIR: /srv/projects/publicado/invariant-dev
+      REPO: Invariant-Security/Invariant
+    steps:
+      - name: Atualizar código de staging
+        run: |
+          # safe.directory: o runner roda como root e o repo tem .git de outro dono (victor)
+          git config --global --add safe.directory "$SRC_DIR"
+          cd "$SRC_DIR"
+          git fetch "https://x-access-token:${{ github.token }}@github.com/${REPO}.git" dev
+          git reset --hard FETCH_HEAD
+
+      - name: Rebuild e subir os containers (aguarda ficar healthy)
+        run: |
+          cd "$SRC_DIR"
+          docker compose -f deploy/docker-compose.dev.yml up -d --build --wait --wait-timeout 180
+
+      - name: Logs em caso de falha
+        if: failure()
+        run: |
+          cd "$SRC_DIR"
+          docker compose -f deploy/docker-compose.dev.yml logs --tail=80 || true

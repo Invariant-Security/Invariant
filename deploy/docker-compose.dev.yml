@@ -1,0 +1,56 @@
+# Staging stack for teste.invariantsec.org -- runs the `dev` branch so it
+# can be seen live, separate from `main`'s always-on production stack
+# (docker-compose.prod.yml). Deployed by .github/workflows/deploy-dev.yml
+# into a DEDICATED checkout at /srv/projects/publicado/invariant-dev (never
+# the same directory used as a human/agent workspace -- see AGENTS.md's
+# "armadilhas conhecidas" for why that matters).
+#
+# No database and no own data/demo here either: reads the SAME data/demo/
+# the production checkout already populated (bind-mounted by absolute path,
+# since this compose file lives in a different checkout tree than
+# docker-compose.prod.yml's relative ../data/demo). If dev's API/report
+# format ever diverges from what's on disk, re-run ./demo.sh in THIS
+# checkout instead and switch this mount back to a relative ../data/demo.
+#
+# Run from repo root: docker compose -f deploy/docker-compose.dev.yml up -d --build --wait
+name: invariant-dev
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    container_name: invariant-dev-api
+    environment:
+      INVARIANT_API_CORS_ORIGINS: https://teste.invariantsec.org
+    volumes:
+      - /srv/projects/publicado/invariant/data/demo:/app/data/demo:ro
+    networks:
+      - vps-proxy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: ../frontend
+      args:
+        VITE_API_BASE: ""
+    container_name: invariant-dev-web
+    networks:
+      - vps-proxy
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  vps-proxy:
+    external: true
