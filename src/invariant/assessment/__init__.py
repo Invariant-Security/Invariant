@@ -2258,6 +2258,28 @@ def _evaluate_inactive_password_lock(facts: SystemFacts) -> bool:
 # `find` over the whole filesystem, or a dynamically-shaped PATH string,
 # rather than a fixed set of paths/config files), backed by the 3 new
 # facts.py text blocks documented there.
+_EVIDENCE_PATH_LIMIT = 50
+
+
+def _join_paths_for_evidence(paths: list[str]) -> str:
+    """Joins a path list for an evidence string, capped at
+    _EVIDENCE_PATH_LIMIT -- these two checks are the only ones in this
+    module backed by a real full-filesystem `find` (every other check's
+    evidence comes from a fixed, small set of paths/config lines), and on
+    a real host (not a minimal demo container) that list can run into the
+    tens of thousands of entries -- confirmed empirically: an unbounded
+    `', '.join(...)` on one real target produced a single 2.5MB evidence
+    string, ballooning the whole assessment report file to match. The
+    fix stays at this layer (not display-only truncation) since the
+    report this string ends up in is downloaded whole by the frontend.
+    """
+    if len(paths) <= _EVIDENCE_PATH_LIMIT:
+        return ", ".join(paths)
+    shown = ", ".join(paths[:_EVIDENCE_PATH_LIMIT])
+    remaining = len(paths) - _EVIDENCE_PATH_LIMIT
+    return f"{shown}, and {remaining} more ({len(paths)} total -- rerun the check's own `find` on the target for the full list)"
+
+
 def _parse_world_writable(text: str) -> tuple[list[str], list[str]]:
     """Parses facts.world_writable_text ("f:<mode>:<path>" or
     "d:<mode>:<path>" lines, one per world-writable file/dir found) into
@@ -2303,9 +2325,9 @@ def _evidence_world_writable_secured(facts: SystemFacts) -> str:
         return "no world-writable files; sticky bit set on all world-writable directories"
     parts = []
     if files:
-        parts.append(f"world-writable files: {', '.join(files)}")
+        parts.append(f"world-writable files: {_join_paths_for_evidence(files)}")
     if bad_dirs:
-        parts.append(f"world-writable directories without sticky bit: {', '.join(bad_dirs)}")
+        parts.append(f"world-writable directories without sticky bit: {_join_paths_for_evidence(bad_dirs)}")
     return "; ".join(parts)
 
 
@@ -2342,7 +2364,7 @@ def _evidence_no_unowned_files(facts: SystemFacts) -> str:
     paths = _parse_unowned(facts.unowned_text)
     if not paths:
         return "no files or directories without an owner or group found"
-    return f"unowned/ungrouped: {', '.join(paths)}"
+    return f"unowned/ungrouped: {_join_paths_for_evidence(paths)}"
 
 
 def _root_path_entries(facts: SystemFacts) -> tuple[str, list[tuple[str, dict[str, str] | None]]]:
