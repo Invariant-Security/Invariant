@@ -153,6 +153,10 @@ def test_extract_wires_extractor_output_into_storage(monkeypatch, capsys):
         "rationale": "rationale",
         "audit": "audit",
         "remediation": "remediation",
+        "default_value": "",
+        "references": "",
+        "cis_controls": "",
+        "impact": "",
         "source_page_start": 0,
         "source_page_end": 0,
     }

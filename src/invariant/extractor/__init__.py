@@ -55,6 +55,15 @@ _SECTION_LABEL_RE = re.compile(
 # more than once in this document.
 _MAX_TITLE_WRAP_LINES = 3
 
+# The last recommendation in a benchmark has no following header to bound
+# its body, so without this it swallows everything after it -- confirmed:
+# CIS Debian Linux 10 v1.0.0's last recommendation (6.2.20) absorbed a
+# 17KB appendix (the full recommendation checklist plus "Appendix: Change
+# History") into its own CIS Controls section. Every appendix section
+# checked so far (Debian 10/12, Ubuntu 20.04) starts with a line reading
+# exactly "Appendix: <name>" -- used to cut the last body off before it.
+_APPENDIX_RE = re.compile(r"^Appendix:\s")
+
 
 @dataclass
 class ExtractedRecommendation:
@@ -72,6 +81,14 @@ class ExtractedRecommendation:
     rationale: str
     audit: str
     remediation: str
+    # Preserved as-is when the section is present, never normalized (some
+    # recommendations legitimately don't have one, e.g. "Impact" is often
+    # only used for the riskier changes -- empty string means "not present
+    # in this recommendation", not "extraction failed").
+    default_value: str = ""
+    references: str = ""
+    cis_controls: str = ""
+    impact: str = ""
     # 1-based PDF page numbers this recommendation's header-through-body text
     # was found on (PRD sec. 47, the reproducibility invariant: every
     # extracted field must be traceable to an exact page range of the raw
@@ -195,6 +212,12 @@ def extract_all_recommendations(pdf_path: Path) -> list[ExtractedRecommendation]
     for i, header in enumerate(headers):
         body_start = header["body_start"]
         body_end = headers[i + 1]["line_start"] if i + 1 < len(headers) else len(lines)
+        # The last header has no following header to stop it at -- clip it
+        # before the appendix instead of running to end-of-document. Every
+        # other header is already bounded by the next one, so this is a
+        # no-op for them (an "Appendix:" line never appears before the
+        # document's last numbered recommendation).
+        body_end = _end_before_appendix(lines, body_start, body_end)
         sections = _split_sections(lines[body_start:body_end])
         end_line_index = (body_end - 1) if body_end > body_start else header["line_start"]
 
@@ -208,11 +231,22 @@ def extract_all_recommendations(pdf_path: Path) -> list[ExtractedRecommendation]
                 rationale=sections.get("Rationale", "").strip(),
                 audit=sections.get("Audit", "").strip(),
                 remediation=sections.get("Remediation", "").strip(),
+                default_value=sections.get("Default Value", "").strip(),
+                references=sections.get("References", "").strip(),
+                cis_controls=sections.get("CIS Controls", "").strip(),
+                impact=sections.get("Impact", "").strip(),
                 source_page_start=line_pages[header["line_start"]],
                 source_page_end=line_pages[end_line_index],
             )
         )
     return recommendations
+
+
+def _end_before_appendix(lines: list[str], body_start: int, body_end: int) -> int:
+    for i in range(body_start, body_end):
+        if _APPENDIX_RE.match(lines[i].strip()):
+            return i
+    return body_end
 
 
 def _find_headers(lines: list[str]) -> list[dict]:

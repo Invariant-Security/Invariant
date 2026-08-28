@@ -1,4 +1,4 @@
-from invariant.extractor import _find_headers, _non_empty_lines, _split_sections
+from invariant.extractor import _end_before_appendix, _find_headers, _non_empty_lines, _split_sections
 
 
 def _lines(text: str) -> list[str]:
@@ -82,3 +82,32 @@ def test_non_empty_lines_strips_both_bullet_glyph_variants():
     text = f"{old_style_bullet} Level 1 - Server\n{new_style_bullet} Level 1 - Workstation\n"
 
     assert _non_empty_lines(text) == ["Level 1 - Server", "Level 1 - Workstation"]
+
+
+def test_end_before_appendix_clips_the_last_bodys_unbounded_range():
+    """The last recommendation in a benchmark has no following header to
+    stop it -- confirmed against the real CIS Debian Linux 10 v1.0.0 PDF,
+    where the last recommendation's CIS Controls section absorbed a 17KB
+    appendix before this fix (codexplan.md Fase 4 item 4).
+    """
+    lines = _lines(
+        "Remediation:\n"
+        "Run the following command.\n"
+        "CIS Controls:\n"
+        "Version 7\n"
+        "Appendix: Change History\n"
+        "Feb 13, 2020 1.0.0 Published\n"
+    )
+
+    end = _end_before_appendix(lines, body_start=0, body_end=len(lines))
+
+    assert end == 4
+    assert lines[end] == "Appendix: Change History"
+
+
+def test_end_before_appendix_is_a_no_op_when_no_appendix_marker_is_present():
+    lines = _lines("Remediation:\nRun the following command.\n")
+
+    end = _end_before_appendix(lines, body_start=0, body_end=len(lines))
+
+    assert end == len(lines)

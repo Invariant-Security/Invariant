@@ -27,7 +27,14 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from invariant.extractor import ExtractedRecommendation, _find_headers, _non_empty_lines, _pdf_lines, _split_sections
+from invariant.extractor import (
+    ExtractedRecommendation,
+    _end_before_appendix,
+    _find_headers,
+    _non_empty_lines,
+    _pdf_lines,
+    _split_sections,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CIS_RAW_DIR = REPO_ROOT / "data" / "raw" / "cis"
@@ -133,6 +140,7 @@ def _recommendations_from_headers(
     for i, header in enumerate(headers):
         body_start = header["body_start"]
         body_end = headers[i + 1]["line_start"] if i + 1 < len(headers) else len(lines)
+        body_end = _end_before_appendix(lines, body_start, body_end)
         sections = _split_sections(lines[body_start:body_end])
         end_line_index = (body_end - 1) if body_end > body_start else header["line_start"]
         recommendations.append(
@@ -145,6 +153,10 @@ def _recommendations_from_headers(
                 rationale=sections.get("Rationale", "").strip(),
                 audit=sections.get("Audit", "").strip(),
                 remediation=sections.get("Remediation", "").strip(),
+                default_value=sections.get("Default Value", "").strip(),
+                references=sections.get("References", "").strip(),
+                cis_controls=sections.get("CIS Controls", "").strip(),
+                impact=sections.get("Impact", "").strip(),
                 source_page_start=line_pages[header["line_start"]],
                 source_page_end=line_pages[end_line_index],
             )
