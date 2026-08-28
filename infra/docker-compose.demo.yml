@@ -15,10 +15,27 @@ services:
   # The demo's clean baseline: hardened, only the genuine "impossible in an
   # unprivileged container" gaps FAIL (see docs/architecture/checks.md and
   # scripts/demo/misconfig_catalog.py's CONTAINER_IMPOSSIBLE_TITLES).
+  # `tmpfs`/`volumes` on all 6 (checks-backlog.md Group C's partition
+  # family): see infra/docker-compose.yml's own comment above its 6
+  # services for why /var itself is deliberately excluded (dpkg/apt state).
+  # /var/log/audit gets an explicit mode here (unlike the plain dev/test
+  # containers) because these hardened images actually install auditd --
+  # its package-shipped /var/log/audit is mode 0750 group adm, and "Ensure
+  # the audit log file directory mode is configured" (already-implemented,
+  # not part of Group C) reads that directory's own mode; Docker's tmpfs
+  # default for a path it doesn't special-case is 0755, which fails that
+  # check's "none of 0027 set" requirement (world-readable). No plain
+  # dev/test container has auditd installed, so this mode override is only
+  # needed here.
   demo-ubuntu-hardened:
     image: demo-ubuntu-hardened:latest
     build: ./docker/demo-ubuntu-hardened
     container_name: invariant-demo-ubuntu-hardened
+    tmpfs: [/tmp, /home, /var/tmp, /var/log]
+    volumes:
+      - type: tmpfs
+        target: /var/log/audit
+        tmpfs: {mode: 0750}
 
   # The 5 "problem" containers -- start from the hardened images, then get
   # 2-3 randomly-applied misconfigs from scripts/demo/apply_misconfigs.py
@@ -27,23 +44,48 @@ services:
     image: demo-debian-hardened:latest
     build: ./docker/demo-debian-hardened
     container_name: invariant-demo-debian-1
+    tmpfs: [/tmp, /home, /var/tmp, /var/log]
+    volumes:
+      - type: tmpfs
+        target: /var/log/audit
+        tmpfs: {mode: 0750}
 
   demo-debian-2:
     image: demo-debian-hardened:latest
     build: ./docker/demo-debian-hardened
     container_name: invariant-demo-debian-2
+    tmpfs: [/tmp, /home, /var/tmp, /var/log]
+    volumes:
+      - type: tmpfs
+        target: /var/log/audit
+        tmpfs: {mode: 0750}
 
   demo-debian-3:
     image: demo-debian-hardened:latest
     build: ./docker/demo-debian-hardened
     container_name: invariant-demo-debian-3
+    tmpfs: [/tmp, /home, /var/tmp, /var/log]
+    volumes:
+      - type: tmpfs
+        target: /var/log/audit
+        tmpfs: {mode: 0750}
 
   demo-ubuntu-1:
     image: demo-ubuntu-hardened:latest
     build: ./docker/demo-ubuntu-hardened
     container_name: invariant-demo-ubuntu-1
+    tmpfs: [/tmp, /home, /var/tmp, /var/log]
+    volumes:
+      - type: tmpfs
+        target: /var/log/audit
+        tmpfs: {mode: 0750}
 
   demo-ubuntu-2:
     image: demo-ubuntu-hardened:latest
     build: ./docker/demo-ubuntu-hardened
     container_name: invariant-demo-ubuntu-2
+    tmpfs: [/tmp, /home, /var/tmp, /var/log]
+    volumes:
+      - type: tmpfs
+        target: /var/log/audit
+        tmpfs: {mode: 0750}

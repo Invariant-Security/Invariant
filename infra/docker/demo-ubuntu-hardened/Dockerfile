@@ -14,7 +14,7 @@
 # systemd/journald PID 1, no immutable-flag-capable audit subsystem without
 # extra capabilities) -- see docs/architecture/checks.md and
 # scripts/demo/misconfig_catalog.py's CONTAINER_IMPOSSIBLE_TITLES for
-# exactly which 5 stay FAIL. Confirmed empirically: 160 of 165 CHECKS pass
+# exactly which 5 stay FAIL. Confirmed empirically: 187 of 193 CHECKS pass
 # on this image, including 4 real packages (ufw/sudo/auditd/aide/cron/
 # chrony/libpam-pwquality) whose entire point IS package presence -- there's
 # no "pure config" way to pass a package-presence check -- plus a real
@@ -172,6 +172,15 @@ RUN cat > /etc/security/pwhistory.conf <<'EOF'
 remember = 24
 enforce_for_root
 use_authtok
+EOF
+
+# --- systemd-timesyncd authorized timeserver (checks-backlog.md Group B):
+# see the Debian Dockerfile's comment -- same "config-only demo" pattern,
+# same CIS-documented example servers.
+RUN cat > /etc/systemd/timesyncd.conf <<'EOF'
+[Time]
+NTP=time.nist.gov
+FallbackNTP=time-a-g.nist.gov
 EOF
 
 CMD ["sleep", "infinity"]

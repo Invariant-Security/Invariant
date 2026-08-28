@@ -14,7 +14,7 @@
 # systemd/journald PID 1, no immutable-flag-capable audit subsystem without
 # extra capabilities) -- see docs/architecture/checks.md and
 # scripts/demo/misconfig_catalog.py's CONTAINER_IMPOSSIBLE_TITLES for
-# exactly which 5 stay FAIL. Confirmed empirically: 160 of 165 CHECKS pass
+# exactly which 5 stay FAIL. Confirmed empirically: 187 of 193 CHECKS pass
 # on this image, including 4 real packages (ufw/sudo/auditd/aide/cron/
 # chrony/libpam-pwquality) whose entire point IS package presence -- there's
 # no "pure config" way to pass a package-presence check -- plus a real
@@ -203,6 +203,19 @@ RUN cat > /etc/security/pwhistory.conf <<'EOF'
 remember = 24
 enforce_for_root
 use_authtok
+EOF
+
+# --- systemd-timesyncd authorized timeserver (checks-backlog.md Group B):
+# /etc/systemd/timesyncd.conf doesn't ship on this image at all (confirmed
+# empirically) -- same "config-only demo" pattern as pwquality.conf/
+# pwhistory.conf above (the check only reads the file; the daemon that
+# would consult it needs a real systemd PID 1, which this container
+# doesn't have). NTP/FallbackNTP values are CIS's own documented example
+# servers (its audit text's sample "PASS" output names these exact two).
+RUN cat > /etc/systemd/timesyncd.conf <<'EOF'
+[Time]
+NTP=time.nist.gov
+FallbackNTP=time-a-g.nist.gov
 EOF
 
 CMD ["sleep", "infinity"]

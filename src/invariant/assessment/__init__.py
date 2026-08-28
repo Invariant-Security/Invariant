@@ -3281,6 +3281,307 @@ def _evidence_audit_processes_prior_to_auditd(facts: SystemFacts) -> str:
     return f"grub.cfg 'linux' lines missing audit=1: {text or '<none -- no grub.cfg found>'}"
 
 
+# checks-backlog.md Group B, both resolved: see the comment above
+# facts.timesyncd_text and facts.journal_remote_status_text for the real
+# audit text and why each is implementable without infra changes.
+
+
+def _evaluate_timesyncd_authorized_timeserver(facts: SystemFacts) -> bool:
+    """Real audit (control 2.3.2.1, identical logic across all 6 target
+    documents): both NTP= and FallbackNTP= must resolve, in the merged
+    timesyncd.conf, to a non-blank value -- the audit script itself doesn't
+    validate *which* server, just that one is actually configured (a NOTE
+    in the audit text defers "in accordance with local site policy" to a
+    human reviewer, same shape as other site-policy-lite checks already
+    implemented). Reuses parse_pwquality_conf() -- same "key = value,
+    comments/blank skipped, later line wins" ini format timesyncd.conf uses.
+    """
+    directives = parse_pwquality_conf(facts.timesyncd_text)
+    return bool(directives.get("ntp")) and bool(directives.get("fallbackntp"))
+
+
+def _evidence_timesyncd_authorized_timeserver(facts: SystemFacts) -> str:
+    directives = parse_pwquality_conf(facts.timesyncd_text)
+    ntp = directives.get("ntp", "<not set>")
+    fallback = directives.get("fallbackntp", "<not set>")
+    return f"timesyncd.conf: NTP={ntp!r}, FallbackNTP={fallback!r}"
+
+
+def _evaluate_journal_remote_not_in_use(facts: SystemFacts) -> bool:
+    """Real audit (identical across all 6 target documents): `systemctl
+    is-enabled ...socket ...service | grep -P '^enabled'` then the same
+    with is-active/'^active' -- "nothing should be returned" from either is
+    the documented PASS condition. See the comment above
+    facts.journal_remote_status_text for why a systemd-less container's
+    `systemctl` failure legitimately satisfies that condition rather than
+    just approximating it.
+    """
+    return facts.journal_remote_status_text.strip() == ""
+
+
+def _evidence_journal_remote_not_in_use(facts: SystemFacts) -> str:
+    text = facts.journal_remote_status_text.strip()
+    return f"systemctl is-enabled/is-active systemd-journal-remote: {text or '<nothing enabled or active>'}"
+
+
+# checks-backlog.md "Grupo C -- systemd real" (6 candidates, previously
+# blocked entirely -- no facts.py field, no Check existed for any of these
+# 6 titles). Real audit text confirmed via Postgres, identical across all 6
+# target documents (only page/footer noise and external_id differ), and
+# critically NOT the "5 more checks that need real systemd" uniform
+# assumption checks-backlog.md originally stated: 4 of the 6 are gated
+# "- IF - <daemon> is in use on the system" in CIS's own audit text, so a
+# target that never installed a given daemon passes that daemon's checks
+# vacuously (same substitution already used by
+# _evaluate_single_time_sync_daemon and _evaluate_journal_remote_not_in_use
+# above) rather than failing. Only 2 of the 6 are unconditional.
+def _parse_systemd_service_status(text: str) -> dict[str, str]:
+    """Parses facts.systemd_service_status_text's `--MARKER--`-delimited
+    sections (same "one text field, self-parsed sub-markers" shape as
+    kernel_modules_text/audit_conf_text) into a lowercase-keyed dict, e.g.
+    {"auditd_enabled": "enabled", "cron_active": "active", ...}.
+    """
+    sections = (
+        "AUDITD_ENABLED", "AUDITD_ACTIVE",
+        "CHRONY_ENABLED", "CHRONY_ACTIVE",
+        "CRON_ENABLED", "CRON_ACTIVE",
+        "TIMESYNCD_ENABLED", "TIMESYNCD_ACTIVE",
+    )
+    markers = {s: f"--{s}--" for s in sections}
+    hits = sorted((text.find(m), s) for s, m in markers.items() if text.find(m) != -1)
+    out = {}
+    for i, (pos, s) in enumerate(hits):
+        start = pos + len(markers[s])
+        end = hits[i + 1][0] if i + 1 < len(hits) else len(text)
+        out[s.lower()] = text[start:end].strip()
+    return out
+
+
+def _evaluate_auditd_enabled_active(facts: SystemFacts) -> bool:
+    """Real audit (unconditional, identical across all 6 target documents):
+    `systemctl is-enabled auditd` and `systemctl is-active auditd` must
+    both report enabled/active. No "- IF - installed" gate in the real
+    audit text -- a target that never installed auditd fails this closed,
+    same posture as every other auditd-absent check in this module.
+    """
+    status = _parse_systemd_service_status(facts.systemd_service_status_text)
+    return status.get("auditd_enabled") == "enabled" and status.get("auditd_active") == "active"
+
+
+def _evidence_auditd_enabled_active(facts: SystemFacts) -> str:
+    status = _parse_systemd_service_status(facts.systemd_service_status_text)
+    return f"systemctl auditd: is-enabled={status.get('auditd_enabled')!r} is-active={status.get('auditd_active')!r}"
+
+
+def _evaluate_chrony_enabled_active(facts: SystemFacts) -> bool:
+    """Real audit is gated "- IF - chrony is in use on the system" --
+    a target that never installed chrony (e.g. one using systemd-timesyncd
+    instead, per _evaluate_single_time_sync_daemon's "exactly one" rule)
+    has nothing to check, a legitimate vacuous PASS.
+    """
+    if "chrony" not in facts.installed_packages:
+        return True
+    status = _parse_systemd_service_status(facts.systemd_service_status_text)
+    return status.get("chrony_enabled") == "enabled" and status.get("chrony_active") == "active"
+
+
+def _evidence_chrony_enabled_active(facts: SystemFacts) -> str:
+    if "chrony" not in facts.installed_packages:
+        return "chrony: not installed (audit is conditional on chrony being in use)"
+    status = _parse_systemd_service_status(facts.systemd_service_status_text)
+    return f"systemctl chrony: is-enabled={status.get('chrony_enabled')!r} is-active={status.get('chrony_active')!r}"
+
+
+def _evaluate_chrony_runs_as_chrony_user(facts: SystemFacts) -> bool:
+    """Real audit is a live `ps -ef | awk '(/[c]hronyd/ && $1!="_chrony")
+    {print $1}'` -- nothing should be returned. Unconditional on package
+    presence (unlike the check above): no chronyd process running at all
+    naturally produces no output either way, same vacuous-pass-by-absence
+    precedent as boot_grub_audit_text.
+    """
+    return facts.chrony_process_user_text.strip() == ""
+
+
+def _evidence_chrony_runs_as_chrony_user(facts: SystemFacts) -> str:
+    text = facts.chrony_process_user_text.strip()
+    return f"chronyd processes not owned by _chrony: {text or '<none>'}"
+
+
+def _evaluate_cron_enabled_active(facts: SystemFacts) -> bool:
+    """Real audit is gated "- IF - cron is installed" -- same substitution
+    as the chrony check above, keyed on the "cron" package.
+    """
+    if "cron" not in facts.installed_packages:
+        return True
+    status = _parse_systemd_service_status(facts.systemd_service_status_text)
+    return status.get("cron_enabled") == "enabled" and status.get("cron_active") == "active"
+
+
+def _evidence_cron_enabled_active(facts: SystemFacts) -> str:
+    if "cron" not in facts.installed_packages:
+        return "cron: not installed (audit is conditional on cron being installed)"
+    status = _parse_systemd_service_status(facts.systemd_service_status_text)
+    return f"systemctl cron: is-enabled={status.get('cron_enabled')!r} is-active={status.get('cron_active')!r}"
+
+
+def _evaluate_timesyncd_enabled_active(facts: SystemFacts) -> bool:
+    """Real audit is gated "- IF - systemd-timesyncd is in use" -- same
+    substitution as the chrony/cron checks above, keyed on the
+    "systemd-timesyncd" package (mutually exclusive with chrony per
+    _evaluate_single_time_sync_daemon, so on any target that chose chrony
+    this is a legitimate vacuous PASS, not a gap).
+    """
+    if "systemd-timesyncd" not in facts.installed_packages:
+        return True
+    status = _parse_systemd_service_status(facts.systemd_service_status_text)
+    return status.get("timesyncd_enabled") == "enabled" and status.get("timesyncd_active") == "active"
+
+
+def _evidence_timesyncd_enabled_active(facts: SystemFacts) -> str:
+    if "systemd-timesyncd" not in facts.installed_packages:
+        return "systemd-timesyncd: not installed (audit is conditional on it being in use)"
+    status = _parse_systemd_service_status(facts.systemd_service_status_text)
+    return f"systemctl systemd-timesyncd: is-enabled={status.get('timesyncd_enabled')!r} is-active={status.get('timesyncd_active')!r}"
+
+
+def _evaluate_audit_rules_running_matches_disk(facts: SystemFacts) -> bool:
+    """Real audit (unconditional, identical across all 6 target documents):
+    `augenrules --check` must print exactly "No change". A target without
+    augenrules installed (auditd absent) gets a shell error here instead --
+    fails closed, same posture as every other auditd-absent check in this
+    module (a missing auditd.conf/log directory is an explicit FAIL branch
+    in the real script, never a vacuous pass).
+    """
+    return "no change" in facts.audit_rules_sync_text.strip().lower()
+
+
+def _evidence_audit_rules_running_matches_disk(facts: SystemFacts) -> str:
+    text = facts.audit_rules_sync_text.strip()
+    return f"augenrules --check: {text or '<no output>'}"
+
+
+# checks-backlog.md Group C's partition family: 19 "<option> set on <mount>"
+# checks + 5 "separate partition exists for <mount>" checks (the group's
+# original "24 candidates" count) plus 2 more discovered during
+# implementation -- "/tmp is a separate partition" and "/dev/shm is a
+# separate partition" (both with an "... is tmpfs or a separate partition"
+# wording variant on the 4 newer target documents) weren't in that original
+# count because a naive single-title lookup doesn't resolve across all 6
+# documents; both variants together do (same "title drift" shape already
+# established for e.g. /etc/shadow permissions).
+def parse_mounts(text: str) -> dict[str, str]:
+    """Parses facts.mounts_text (`findmnt -kn <target> -o TARGET,SOURCE,
+    FSTYPE,OPTIONS`, one line per candidate mount that's actually a real,
+    separate mount -- see the comment above that field in facts.py). Maps
+    mount point -> its raw comma-separated OPTIONS string; a target absent
+    from this dict isn't a separate mount at all.
+    """
+    mounts = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        target, _source, _fstype, options = parts[:4]
+        mounts[target] = options
+    return mounts
+
+
+def _evaluate_mount_option(facts: SystemFacts, target: str, option: str) -> bool:
+    """Real audit (confirmed via Postgres, identical across all 6 target
+    documents): `findmnt -kn <target> | grep -v <option>` should return
+    nothing. CIS's own audit is explicitly conditional ("- IF - a separate
+    partition exists for <target>, verify that the <option> option is
+    set") -- a target that isn't a real, separate mount at all has nothing
+    to check, a legitimate vacuous PASS, same "grep against something that
+    might not be there" precedent used throughout this module.
+    """
+    options = parse_mounts(facts.mounts_text).get(target)
+    return options is None or option in options.split(",")
+
+
+def _evidence_mount_option(facts: SystemFacts, target: str, option: str) -> str:
+    options = parse_mounts(facts.mounts_text).get(target)
+    if options is None:
+        return f"{target}: not a separate mount (option {option!r} check is vacuous)"
+    has = "has" if option in options.split(",") else "missing"
+    return f"{target}: mount options = {options} ({has} {option!r})"
+
+
+def _mount_option_check(title: str, target: str, option: str) -> "Check":
+    return Check(
+        titles=[title],
+        evaluate=lambda facts, t=target, o=option: _evaluate_mount_option(facts, t, o),
+        evidence=lambda facts, t=target, o=option: _evidence_mount_option(facts, t, o),
+    )
+
+
+# 19 candidates: (title, mount target, required option). CIS never requires
+# noexec on /home or /var (users/services need to execute their own files
+# there) or nodev/nosuid/noexec together beyond what's listed -- this is
+# the real per-mount set confirmed via Postgres, not a uniform 3-per-mount
+# grid.
+_MOUNT_OPTION_CANDIDATES = [
+    ("Ensure nodev option set on /dev/shm partition", "/dev/shm", "nodev"),
+    ("Ensure nosuid option set on /dev/shm partition", "/dev/shm", "nosuid"),
+    ("Ensure noexec option set on /dev/shm partition", "/dev/shm", "noexec"),
+    ("Ensure nodev option set on /home partition", "/home", "nodev"),
+    ("Ensure nosuid option set on /home partition", "/home", "nosuid"),
+    ("Ensure nodev option set on /tmp partition", "/tmp", "nodev"),
+    ("Ensure nosuid option set on /tmp partition", "/tmp", "nosuid"),
+    ("Ensure noexec option set on /tmp partition", "/tmp", "noexec"),
+    ("Ensure nodev option set on /var partition", "/var", "nodev"),
+    ("Ensure nosuid option set on /var partition", "/var", "nosuid"),
+    ("Ensure nodev option set on /var/log partition", "/var/log", "nodev"),
+    ("Ensure nosuid option set on /var/log partition", "/var/log", "nosuid"),
+    ("Ensure noexec option set on /var/log partition", "/var/log", "noexec"),
+    ("Ensure nodev option set on /var/log/audit partition", "/var/log/audit", "nodev"),
+    ("Ensure nosuid option set on /var/log/audit partition", "/var/log/audit", "nosuid"),
+    ("Ensure noexec option set on /var/log/audit partition", "/var/log/audit", "noexec"),
+    ("Ensure nodev option set on /var/tmp partition", "/var/tmp", "nodev"),
+    ("Ensure nosuid option set on /var/tmp partition", "/var/tmp", "nosuid"),
+    ("Ensure noexec option set on /var/tmp partition", "/var/tmp", "noexec"),
+]
+
+
+def _evaluate_separate_partition(facts: SystemFacts, target: str) -> bool:
+    """Real audit (confirmed via Postgres, identical across all 6 target
+    documents): `findmnt -kn <target>` must show output -- <target> has to
+    actually be its own mount, distinct from the root filesystem. Unlike
+    the option checks above, this one is unconditional.
+    """
+    return target in parse_mounts(facts.mounts_text)
+
+
+def _evidence_separate_partition(facts: SystemFacts, target: str) -> str:
+    mounts = parse_mounts(facts.mounts_text)
+    if target in mounts:
+        return f"{target}: separate mount, options = {mounts[target]}"
+    return f"{target}: not a separate mount"
+
+
+def _separate_partition_check(titles: list[str], target: str) -> "Check":
+    return Check(
+        titles=titles,
+        evaluate=lambda facts, t=target: _evaluate_separate_partition(facts, t),
+        evidence=lambda facts, t=target: _evidence_separate_partition(facts, t),
+    )
+
+
+# 7 candidates: the 5 generically-titled "separate partition exists for
+# <mount>" (checks-backlog.md's original count) plus /tmp and /dev/shm,
+# whose titles read differently (see the module comment above) but check
+# the exact same thing.
+_SEPARATE_PARTITION_CANDIDATES = [
+    (["Ensure /tmp is a separate partition", "Ensure /tmp is tmpfs or a separate partition"], "/tmp"),
+    (["Ensure /dev/shm is a separate partition", "Ensure /dev/shm is tmpfs or a separate partition"], "/dev/shm"),
+    (["Ensure separate partition exists for /home"], "/home"),
+    (["Ensure separate partition exists for /var"], "/var"),
+    (["Ensure separate partition exists for /var/log"], "/var/log"),
+    (["Ensure separate partition exists for /var/log/audit"], "/var/log/audit"),
+    (["Ensure separate partition exists for /var/tmp"], "/var/tmp"),
+]
+
+
 # The real audit regex for the pam_pwquality.so half: `^\h*password\h+
 # [^#\n\r]+\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?enforcing=0\b` -- a plain
 # PAM "password ... pam_pwquality.so ... enforcing=0" line. re.search
@@ -4693,6 +4994,64 @@ CHECKS = [
         titles=["Ensure the audit log file directory mode is configured"],
         evaluate=_evaluate_audit_log_dir_mode,
         evidence=_evidence_audit_log_dir_mode,
+    ),
+    # checks-backlog.md Group B -- see the comment above each evaluate()
+    # function for the real audit text and why both are implementable
+    # without infra changes.
+    Check(
+        titles=["Ensure systemd-timesyncd configured with authorized timeserver"],
+        evaluate=_evaluate_timesyncd_authorized_timeserver,
+        evidence=_evidence_timesyncd_authorized_timeserver,
+    ),
+    Check(
+        titles=["Ensure systemd-journal-remote service is not in use"],
+        evaluate=_evaluate_journal_remote_not_in_use,
+        evidence=_evidence_journal_remote_not_in_use,
+    ),
+    # checks-backlog.md Group C's partition family -- see the module
+    # comment above _MOUNT_OPTION_CANDIDATES/_SEPARATE_PARTITION_CANDIDATES
+    # for the real audit text and how the 2 bonus /tmp+/dev/shm candidates
+    # were found.
+    *[
+        _mount_option_check(title, target, option)
+        for title, target, option in _MOUNT_OPTION_CANDIDATES
+    ],
+    *[
+        _separate_partition_check(titles, target)
+        for titles, target in _SEPARATE_PARTITION_CANDIDATES
+    ],
+    # checks-backlog.md "Grupo C -- systemd real" -- see the module comment
+    # above _parse_systemd_service_status for the real audit text and the
+    # conditional/unconditional split across these 6.
+    Check(
+        titles=["Ensure auditd service is enabled and active"],
+        evaluate=_evaluate_auditd_enabled_active,
+        evidence=_evidence_auditd_enabled_active,
+    ),
+    Check(
+        titles=["Ensure chrony is enabled and running"],
+        evaluate=_evaluate_chrony_enabled_active,
+        evidence=_evidence_chrony_enabled_active,
+    ),
+    Check(
+        titles=["Ensure chrony is running as user _chrony"],
+        evaluate=_evaluate_chrony_runs_as_chrony_user,
+        evidence=_evidence_chrony_runs_as_chrony_user,
+    ),
+    Check(
+        titles=["Ensure cron daemon is enabled and active"],
+        evaluate=_evaluate_cron_enabled_active,
+        evidence=_evidence_cron_enabled_active,
+    ),
+    Check(
+        titles=["Ensure systemd-timesyncd is enabled and running"],
+        evaluate=_evaluate_timesyncd_enabled_active,
+        evidence=_evidence_timesyncd_enabled_active,
+    ),
+    Check(
+        titles=["Ensure the running and on disk configuration is the same"],
+        evaluate=_evaluate_audit_rules_running_matches_disk,
+        evidence=_evidence_audit_rules_running_matches_disk,
     ),
 ]
 
