@@ -103,32 +103,120 @@ file exists" -- ver `checks.md`). Sem isso, a regra de auditoria não teria o qu
 observar de verdade, mas o `Check` em si ainda é implementável e vai mostrar FAIL de
 forma correta e explicável (mesmo padrão dos outros gaps estruturais).
 
-## Grupo B -- ainda precisam de decisão antes de implementar (2 candidatos)
+## Grupo B -- resolvido (2 candidatos, ambos viraram `Check`)
 
-| Título | Pendência |
-|---|---|
-| Ensure systemd-journal-remote service is not in use | `systemctl is-enabled` não funciona sem systemd real (PID 1) no container -- precisa confirmar se o erro do comando serve de proxy pra "not enabled" (analogia ao vacuous-pass dos checks de kernel module) ou se é Tier 3 puro |
-| Ensure systemd-timesyncd configured with authorized timeserver | grep em `/etc/systemd/timesyncd.conf` -- não precisa do serviço rodando, só o arquivo existir; mas a comparação usa `Page NNN` de boilerplate do PDF que não confirmei ser só cosmético nos 6 docs -- precisa 1 leitura a mais antes de decidir |
+**Atualização (2026-08-28)**: os dois candidatos foram lidos por completo via Postgres
+(script de auditoria inteiro, não truncado) nos 6 documentos e implementados.
+`CHECKS` foi de 165 para **167**. Validado contra os 6 containers reais
+(baseline + hardened) -- suite de testes completa (443 testes) passando.
 
-## Grupo C -- precisam de decisão de infra antes de valer a pena (24 + 6 = 30 candidatos)
+| Título | Decisão | Resultado nos containers |
+|---|---|---|
+| Ensure systemd-journal-remote service is not in use | Audit text idêntico nos 6 docs (só página/rodapé do PDF muda). `systemctl is-enabled/is-active` falha nesses containers (sem systemd real, mesmo gap do Grupo C) -- mas o erro produz exatamente "nada retornado", que é a própria condição de PASS documentada pelo CIS ("Nothing should be returned"), não uma aproximação dela. Diferente das checagens do Grupo C (que precisam provar um estado *positivo* de "rodando", impossível sem systemd real), aqui só é preciso provar a ausência, e o container prova isso por incapacidade -- mesmo precedente já usado em `boot_grub_audit_text`. | PASS vacuamente nos 6 containers reais (baseline e hardened) |
+| Ensure systemd-timesyncd configured with authorized timeserver | Script comparado linha a linha nos 6 docs: debian_linux_11 usa um estilo antigo (array associativo), os outros 5 um estilo refatorado -- lógica idêntica, só cosmética de formatação e número de página do PDF diferem (confirmado, não é drift de condição). Condição real: `NTP=` e `FallbackNTP=` devem estar setados (qualquer valor não-vazio) no `timesyncd.conf` mesclado (arquivo base + `conf.d/`, mesmo padrão já usado em `pwquality_text`). O "site policy" mencionado no audit é só uma nota pro revisor humano, não faz parte do critério programático. | FAIL nos 6 containers de teste (baseline/bad, `_SYSTEMIC_GAPS` em `test_assess_target.py`, external_id `2.3.2.1`) -- não são hardenizados. Nas 2 imagens hardened (`infra/docker/demo-*-hardened/Dockerfile`), fechado com um `/etc/systemd/timesyncd.conf` escrito à mão (mesmo padrão "config-only demo" já usado pra pwquality.conf/pwhistory.conf) -- PASS confirmado nas duas após rebuild. |
 
-**Partições reais (24 candidatos)**: `nodev`/`nosuid`/`noexec` em `/dev/shm`, `/home`,
-`/tmp`, `/var`, `/var/log`, `/var/log/audit`, `/var/tmp`, mais "separate partition
-exists for" em 5 desses mounts. Condição confirmada uniforme nos 6 docs (mesmo script
-`findmnt`-based, padrão CIS bem conhecido) -- **não é ambiguidade, é infra**: precisa
-de mounts `tmpfs` de verdade nos containers de teste, que hoje usam o filesystem do
-container inteiro sem partições separadas.
+## Grupo C -- partições: resolvido (24 + 2 bônus = 26 candidatos)
 
-**Depende de systemd real rodando (6 candidatos)**: `Ensure auditd service is enabled
-and active`, `Ensure chrony is enabled and running`, `Ensure chrony is running as user
-_chrony`, `Ensure cron daemon is enabled and active`, `Ensure systemd-timesyncd is
-enabled and running`, `Ensure the running and on disk configuration is the same`
-(precisa de `augenrules`/auditd real configurado e rodando). Containers atuais não
-rodam systemd (PID 1 não é systemd) -- exigiria trocar a imagem base, mudança maior
-que qualquer coisa feita até agora.
+**Atualização (2026-08-28)**: implementado com autorização explícita do usuário para
+mexer em infra. `CHECKS` foi de 167 para **193**. `infra/docker-compose.yml` (os 6
+containers reais de dev/teste) e `infra/docker-compose.demo.yml` (as 2 imagens
+hardened + os 5 containers de problema) agora montam `tmpfs` em `/tmp`, `/home`,
+`/var/tmp`, `/var/log`, `/var/log/audit` (`/dev/shm` já vem como tmpfs por padrão do
+próprio Docker, confirmado empiricamente -- zero mudança de infra precisou pra ele).
 
-Nenhuma mudança de infra deve ser feita sem autorização explícita, igual já
-documentado em `checks.md` e na memória do projeto.
+`findmnt -kn <target>` só resolve target-por-target (confirmado empiricamente:
+`findmnt -kn A B` sai com código 1 e zero saída se **qualquer um** dos dois não for
+mount de verdade -- não é "imprime o que resolve, ignora o resto"), então
+`facts.mounts_text` faz um loop, uma invocação por target -- ver o comentário acima
+desse campo em `facts.py`.
+
+**2 candidatos bônus, achados durante a implementação**: "Ensure /tmp is a separate
+partition" e "Ensure /dev/shm is a separate partition" não entravam na contagem
+original de 24 porque cada um tem 2 variantes de título (a mesma dualidade "singular
+vs tmpfs-or-separate" que `/etc/shadow` já tinha) -- uma busca ingênua por um único
+título não resolve nos 6 docs, as duas juntas resolvem. `/dev/shm` já passa de graça
+(ver acima); `/tmp` passa junto com o resto do tmpfs.
+
+**`/var` deliberadamente NÃO virou tmpfs**: montaria por cima de `/var/lib/dpkg` e
+`/var/cache/apt`, zerando o banco de dados do dpkg a cada start do container --
+quebraria `facts.py`'s `installed_packages` (lido ao vivo via `dpkg-query -W` em
+todo `assess_target()`) e, em cascata, todo check de presença de pacote já
+implementado (ufw/sudo/auditd/chrony/cron/avahi-ausente/bluetooth-ausente, ...), não
+só os novos checks de partição. Único custo real: "Ensure separate partition exists
+for /var" (`1.1.2.4.1`, estável nos 6 docs) fica FAIL em todo lugar -- os checks de
+`nodev`/`nosuid` *em* `/var` continuam passando vacuamente, porque o audit deles é
+condicional ("- IF - a separate partition exists for /var..."), e sem `/var` montado
+separado essa condição nunca se aplica. Ver o comentário em `docker-compose.yml` e
+`test_assess_target.py`'s `_SYSTEMIC_GAPS`.
+
+**Efeito colateral achado e corrigido**: `ubuntu:24.04` (base de
+`ubuntu-permissions-bad`) vem com um usuário interativo real de fábrica (`ubuntu`,
+`/home/ubuntu`, modo 750 `ubuntu:ubuntu`) -- o tmpfs em `/home` apagava esse diretório
+a cada start, derrubando um check já implementado e antes passando ("Ensure local
+interactive user home directories are configured", `7.2.9`). Corrigido recriando o
+diretório com o mesmo modo/dono no `CMD` do Dockerfile (só o `RUN` de build não
+alcança, o mount só existe quando o container já está rodando) -- ver o comentário
+em `infra/docker/ubuntu-permissions-bad/Dockerfile`. Nenhum dos outros 5 containers
+reais tem usuário interativo de fábrica (confirmado via `/etc/passwd`), então só esse
+precisou do ajuste.
+
+**Imagens hardened**: `/var/log/audit` recebeu `mode: 0750` explícito no
+`docker-compose.demo.yml` (via sintaxe longa `volumes: - type: tmpfs`) -- diferente
+dos 6 containers de teste, essas 2 imagens instalam `auditd` de verdade, e o modo
+default do Docker pro tmpfs (0755) quebraria "Ensure the audit log file directory
+mode is configured" (já implementado, não faz parte do Grupo C). Resultado final:
+193 `CHECKS`, **187 passam** nas 2 imagens hardened -- os mesmos 5 impossíveis de
+container + o `/var` deixado de fora de propósito. Ver `checks.md`.
+
+## Grupo C -- systemd real: resolvido (6 candidatos)
+
+**Atualização (2026-08-28)**: os 6 candidatos foram implementados. `CHECKS` foi de
+193 para **199**. Nenhum dos 6 títulos existia como `Check` antes disso -- o "ainda
+bloqueado" era literal, não só "falhando em todo lugar".
+
+Confirmado via Postgres (texto de audit idêntico nos 6 documentos, só página/rodapé
+do PDF diverge) que **4 dos 6 controles são condicionais** ("- IF - chrony/cron/
+systemd-timesyncd está em uso..."): um alvo que nunca instalou um desses daemons
+passa vacuamente nesse controle específico, mesma substituição já usada em
+`_evaluate_single_time_sync_daemon` e `_evaluate_journal_remote_not_in_use`. Só 2 são
+incondicionais (auditd enabled+active, `augenrules --check` == "No change").
+
+**Decisão de infra**: em vez de construir um container novo com systemd real
+(`--privileged` + bind mount de `/sys/fs/cgroup`, avaliado e descartado por decisão
+do usuário -- focar só na infra já existente), os 6 checks foram validados
+diretamente contra **a própria VPS de produção** (systemd real como PID 1, Ubuntu
+24.04.4, `document_slug_for_os` resolve `ubuntu_linux_24_04` de forma nativa) e
+contra `invariant-api` (container Debian 13 de produção do próprio projeto, sem
+systemd -- bom caso de robustez pra "comando não existe" nos 2 controles
+incondicionais). Nenhum transporte novo foi criado no código (`collect_facts` segue
+100% `docker exec`, como sempre foi) -- a validação contra a VPS em si usou um script
+avulso, fora do repositório, que só reaproveita `facts._collect_script()`/
+`_parse_collect_output()` via `subprocess` local, sem tocar `facts.py`.
+
+Achado colateral relevante: o scan `find / -xdev` (world-writable/unowned) levou
+**~50s** contra o filesystem real da VPS, contra o timeout de 10s que
+`facts.collect_facts()` usa hoje para containers -- se algum dia a estratégia mudar
+pra assessar hosts reais via um transporte oficial (não é o caso aqui, `docker exec`
+continua sendo o único transporte do produto), esse timeout precisaria crescer.
+
+Resultado na VPS real: `cron` e `systemd-timesyncd` PASSam de verdade (ambos
+genuinamente `enabled`/`active`, não vacuamente); `auditd` FAIL (não instalado);
+`augenrules --check` FAIL fechado (comando não existe sem auditd). Todo caminho de
+código dos 6 checks foi exercitado contra um alvo real.
+
+**Efeito colateral #1 (6 containers de dev/teste)**: nenhum instala auditd/chrony/
+cron, então só os 2 controles incondicionais viram FAIL de verdade -- confirmado via
+`assess_target()`, external_ids adicionados a `_SYSTEMD_REAL_GAP_BY_DOCUMENT` em
+`test_assess_target.py`.
+
+**Efeito colateral #2 (2 imagens hardened do demo)**: instalam auditd/chrony/cron mas
+não têm systemd real -- 4 dos 6 títulos (os 2 incondicionais + chrony/cron enabled,
+que agora têm o pacote presente e portanto a condição "se em uso" passa a se aplicar)
+viram FAIL. Adicionados a `scripts/demo/misconfig_catalog.py`'s
+`CONTAINER_IMPOSSIBLE_TITLES` (mesmo motivo já documentado pros outros 5: sem systemd
+real, não tem como o daemon estar "ativo"). Resultado final: 199 `CHECKS`, **189
+passam** nas 2 imagens hardened -- os mesmos 9 impossíveis de container + o `/var`
+deixado de fora de propósito. Ver `checks.md`.
 
 ## Grupo D -- descartados (13 candidatos)
 
@@ -156,10 +244,10 @@ duplicados aqui.)
 
 ## Como usar este documento
 
-**Grupos A + A2 (25 candidatos) são o alvo da próxima rodada de implementação**, mesmo
-padrão das rounds 1-3 (subagents paralelos em worktree, agrupados por campo de
-`facts.py` compartilhado). Grupo B (2 candidatos) precisa de mais 1 leitura pontual
-antes de entrar ou não numa rodada. Grupos C e D não avançam sem decisão do usuário
-(infra) ou seguem descartados.
+Grupos A + A2 (25 candidatos, round 4), B (2 candidatos) e os dois pedaços do C
+(26 partições + 6 systemd real) já foram implementados -- `CHECKS` foi de 142 para
+**199**. Só resta o Grupo D (descartado, não avança).
 
-**Contagem final**: 16 (A) + 9 (A2) + 2 (B) + 30 (C) + 13 (D) = 70.
+**Contagem final**: 16 (A) + 9 (A2) + 2 (B) + 26 (C partições, 24 originais + 2
+bônus) + 6 (C systemd) + 13 (D) = 72 (dos 70 originais + 2 bônus achados durante a
+implementação do C).

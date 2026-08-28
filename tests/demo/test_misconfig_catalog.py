@@ -30,11 +30,14 @@ def test_recipe_check_titles_never_overlap_container_impossible_titles():
         assert not overlap, f"{recipe.id} targets a container-impossible title: {overlap}"
 
 
-def test_container_impossible_titles_is_exactly_five():
+def test_container_impossible_titles_is_exactly_nine():
     """Regression guard: the hardening work that closed 20 of the original
     25 structural-gap titles must not silently get re-widened back out by a
-    future edit -- these 5 are the only ones genuinely impossible inside an
-    unprivileged Docker container.
+    future edit -- these 9 are the only ones genuinely impossible inside an
+    unprivileged Docker container (the original 5, plus 4 more added when
+    checks-backlog.md's "Grupo C -- systemd real" checks landed: auditd/
+    chrony/cron are installed and configured on both hardened images but
+    never actually running, since neither runs systemd as PID 1).
     """
     assert CONTAINER_IMPOSSIBLE_TITLES == {
         "Ensure the audit configuration is immutable",
@@ -42,6 +45,10 @@ def test_container_impossible_titles_is_exactly_five():
         "Ensure journald Storage is configured",
         "Ensure journald log file rotation is configured",
         "Ensure access to bootloader config is configured",
+        "Ensure auditd service is enabled and active",
+        "Ensure chrony is enabled and running",
+        "Ensure cron daemon is enabled and active",
+        "Ensure the running and on disk configuration is the same",
     }
 
 

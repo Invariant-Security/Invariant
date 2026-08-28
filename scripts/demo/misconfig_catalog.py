@@ -12,15 +12,20 @@ from src/invariant/assessment/__init__.py's CHECKS -- never an invented
 failure condition. See docs/architecture/checks.md for the non-negotiable
 rule this enforces ("every Check must cite a real control... never
 invented") and for how "demo-eligible" (this catalog's scope) was derived:
-it's every one of the 165 CHECKS that already PASSES on both hardened
-images except the 5 genuinely-impossible-in-an-unprivileged-container gaps
+it's every one of the 199 CHECKS that already PASSES on both hardened
+images except the 9 genuinely-impossible-in-an-unprivileged-container gaps
 documented in CONTAINER_IMPOSSIBLE_TITLES below (no bootloader, no
 functioning systemd/journald PID 1, no immutable-flag-capable audit
-subsystem without extra capabilities). Everything else that used to be a
-gap here (cron file permissions, pam_pwquality, su restriction, faillock
-root lockout, single time-sync daemon, auditd.conf directives, real audit
-rules) was closed by hardening the two Dockerfiles for real -- see
-docs/architecture/checks.md's own history of that work.
+subsystem without extra capabilities, no live auditd/chrony/cron daemon).
+Everything else that used to be a gap here (cron file permissions,
+pam_pwquality, su restriction, faillock root lockout, single time-sync
+daemon, auditd.conf directives, real audit rules) was closed by hardening
+the two Dockerfiles for real -- see docs/architecture/checks.md's own
+history of that work. "Ensure separate partition exists for /var"
+(checks-backlog.md Group C) also fails on both images but is deliberately
+NOT in CONTAINER_IMPOSSIBLE_TITLES -- it's a real infra tradeoff (`/var`
+staying off tmpfs to protect dpkg's own database), not a container
+impossibility, so it's simply outside this catalog's "demo-eligible" scope.
 
 `document` on each Recipe is informational only (which of the two demo CIS
 documents -- debian_linux_11 or ubuntu_linux_20_04 -- this recipe's control
@@ -75,6 +80,26 @@ CONTAINER_IMPOSSIBLE_TITLES = frozenset(
         "Ensure journald log file rotation is configured",
         # /boot/grub/grub.cfg never exists in a container -- no bootloader.
         "Ensure access to bootloader config is configured",
+        # checks-backlog.md "Grupo C -- systemd real": auditd/chrony/cron are
+        # installed and configured on both hardened images (see the two
+        # Dockerfiles), but neither runs systemd as PID 1, so none of these
+        # daemons is ever actually *running* -- `systemctl is-enabled/
+        # is-active` can't report a real state, same structural limit as the
+        # journald/immutable-audit entries above. "Ensure chrony is running
+        # as user _chrony" and "Ensure systemd-timesyncd is enabled and
+        # running" are NOT in this set: both pass vacuously here instead
+        # (no chronyd process at all; systemd-timesyncd never installed,
+        # chrony is this image's chosen single time-sync daemon) -- CIS's
+        # own audit text gates all 4 titles below/above on "- IF - X is in
+        # use", so a genuinely-absent daemon is a legitimate PASS, not a gap.
+        "Ensure auditd service is enabled and active",
+        "Ensure chrony is enabled and running",
+        "Ensure cron daemon is enabled and active",
+        # `augenrules --check` compares the live-loaded ruleset against
+        # rules.d/*.rules -- with no systemd/auditd ever starting, nothing
+        # ever loads the rules, so "running" and "on disk" can never match
+        # regardless of how correct the on-disk rules file is.
+        "Ensure the running and on disk configuration is the same",
     }
 )
 

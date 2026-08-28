@@ -175,6 +175,31 @@ _SYSTEMIC_GAPS = {
     # root-PATH) already passes with zero further changes.
     "5.2.7",  # Ensure access to the su command is restricted
     "5.3.3.1.3",  # Ensure password failed attempts lockout includes root account
+    # checks-backlog.md Group B, resolved: none of the 6 Dockerfiles
+    # configure /etc/systemd/timesyncd.conf (confirmed via assess_target()
+    # against all 6 live containers -- the file doesn't exist, same "package
+    # never hardened for it" story as the rest of this set), same
+    # external_id "2.3.2.1" on every document. The other Group B check,
+    # "Ensure systemd-journal-remote service is not in use", passes
+    # vacuously everywhere instead (see facts.journal_remote_status_text),
+    # so it isn't listed here.
+    "2.3.2.1",
+    # checks-backlog.md Group C's partition family: 25 of 26 candidates
+    # (19 "<option> set on <mount>" + 7 "separate partition exists"/"is a
+    # separate partition") pass on all 6 real containers now that
+    # infra/docker-compose.yml tmpfs-mounts /tmp, /home, /var/tmp, /var/log,
+    # /var/log/audit (/dev/shm is already tmpfs by Docker's own default) --
+    # confirmed via assess_target() against all 6, same external_id
+    # everywhere (see the Postgres check that confirmed this). The one
+    # exception, stable "1.1.2.4.1" on every document: /var itself is
+    # deliberately NOT tmpfs-mounted (see docker-compose.yml's own comment
+    # above the 6 services -- it would blank /var/lib/dpkg, breaking every
+    # package-presence check's `installed_packages` collection), so "Ensure
+    # separate partition exists for /var" stays failing. The nodev/nosuid
+    # option checks *on* /var don't need listing here: CIS's own audit for
+    # those is conditional ("- IF - a separate partition exists for /var"),
+    # so leaving /var unmounted makes them pass vacuously instead.
+    "1.1.2.4.1",
 }
 
 # Round 2: the other 3 of the 9 newly-failing checks drift per document.
@@ -297,6 +322,27 @@ _ROUND4_GAP_BY_DOCUMENT = {
     },
 }
 
+# checks-backlog.md "Grupo C -- systemd real" (6 checks, previously
+# entirely unimplemented -- no facts.py field, no Check existed for any of
+# them). None of the 6 live containers run systemd as PID 1 or install
+# auditd, so of the 6 new checks only the 2 *unconditional* ones fail here
+# (auditd enabled+active, running-matches-on-disk) -- confirmed via
+# assess_target() against all 6, not guessed. The other 4 are gated
+# "- IF - <daemon> is in use" in CIS's own audit text and pass vacuously
+# (chrony/cron/systemd-timesyncd are all absent, same substitution already
+# used by _SYSTEMIC_GAPS's "2.3.1.1" single-time-sync-daemon entry).
+# Stable external_ids across all 6 documents for the auditd check would be
+# nice but aren't -- same 6.x-section drift as _AUDIT_FILES_GAP_BY_DOCUMENT
+# above (this family lives in that same section), looked up by document.
+_SYSTEMD_REAL_GAP_BY_DOCUMENT = {
+    "debian_linux_11": {"6.4.1.2", "6.4.3.21"},
+    "debian_linux_12": {"6.2.1.2", "6.2.3.30"},
+    "debian_linux_13": {"6.2.1.2", "6.2.3.37"},
+    "ubuntu_linux_20_04": {"6.3.1.2", "6.3.3.21"},
+    "ubuntu_linux_22_04": {"6.2.1.2", "6.2.3.21"},
+    "ubuntu_linux_24_04": {"6.2.1.2", "6.2.3.30"},
+}
+
 
 def test_assess_debian_baseline_fails_only_sshd_config_permissions():
     findings = assess_target("invariant-debian-baseline")
@@ -313,7 +359,8 @@ def test_assess_debian_baseline_fails_only_sshd_config_permissions():
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_11"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_11"]
         | _ROUND2_GAP_BY_DOCUMENT["debian_linux_11"]
-        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_11"],
+        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_11"]
+        | _SYSTEMD_REAL_GAP_BY_DOCUMENT["debian_linux_11"],
     )
 
 
@@ -329,7 +376,8 @@ def test_assess_debian_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_12"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_12"]
         | _ROUND2_GAP_BY_DOCUMENT["debian_linux_12"]
-        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_12"],
+        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_12"]
+        | _SYSTEMD_REAL_GAP_BY_DOCUMENT["debian_linux_12"],
     )
 
 
@@ -345,7 +393,8 @@ def test_assess_debian_permissions_bad_fails_only_shadow_and_sshd_config_permiss
         | _AUDIT_FILES_GAP_BY_DOCUMENT["debian_linux_13"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["debian_linux_13"]
         | _ROUND2_GAP_BY_DOCUMENT["debian_linux_13"]
-        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_13"],
+        | _ROUND4_GAP_BY_DOCUMENT["debian_linux_13"]
+        | _SYSTEMD_REAL_GAP_BY_DOCUMENT["debian_linux_13"],
     )
 
 
@@ -363,7 +412,8 @@ def test_assess_ubuntu_baseline_fails_only_sshd_config_permissions():
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
         | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
-        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
+        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_20_04"]
+        | _SYSTEMD_REAL_GAP_BY_DOCUMENT["ubuntu_linux_20_04"],
     )
 
 
@@ -379,7 +429,8 @@ def test_assess_ubuntu_ssh_bad_fails_only_ssh_and_sshd_config_permissions():
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
         | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
-        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_22_04"],
+        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_22_04"]
+        | _SYSTEMD_REAL_GAP_BY_DOCUMENT["ubuntu_linux_22_04"],
     )
 
 
@@ -395,7 +446,8 @@ def test_assess_ubuntu_permissions_bad_fails_only_shadow_and_sshd_config_permiss
         | _AUDIT_FILES_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
         | _MAC_MAX_STARTUPS_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
         | _ROUND2_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
-        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_24_04"],
+        | _ROUND4_GAP_BY_DOCUMENT["ubuntu_linux_24_04"]
+        | _SYSTEMD_REAL_GAP_BY_DOCUMENT["ubuntu_linux_24_04"],
     )
 
 

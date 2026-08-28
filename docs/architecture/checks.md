@@ -93,8 +93,8 @@ what's left is a short, honest list of things a Docker container simply
 cannot do.
 
 Confirmed empirically (built and assessed against live containers): of the
-165 `CHECKS`, exactly **160 pass** on both hardened images with zero
-further changes, and the same **5 fail structurally** on both, regardless
+199 `CHECKS`, exactly **189 pass** on both hardened images with zero
+further changes, and the same **9 fail structurally** on both, regardless
 of configuration:
 
 | Check title | Why it's genuinely impossible in a container |
@@ -104,9 +104,49 @@ of configuration:
 | Ensure journald Storage is configured | same |
 | Ensure journald log file rotation is configured | same |
 | Ensure access to bootloader config is configured | `/boot/grub/grub.cfg` never exists in a container (no bootloader) |
+| Ensure auditd service is enabled and active | auditd is installed and configured (real rules on disk), but with no systemd as PID 1 there's no live daemon for `systemctl` to report as enabled/active. |
+| Ensure chrony is enabled and running | Same -- chrony is installed, but nothing ever starts it without real systemd. |
+| Ensure cron daemon is enabled and active | Same. |
+| Ensure the running and on disk configuration is the same | `augenrules --check` compares the *live-loaded* audit ruleset against the rules files on disk -- with no systemd/auditd ever starting, nothing ever loads the rules, so the two can never match regardless of how correct the on-disk file is. |
 
-This 5-title set is `scripts/demo/misconfig_catalog.py`'s
-`CONTAINER_IMPOSSIBLE_TITLES` constant.
+This 9-title set is `scripts/demo/misconfig_catalog.py`'s
+`CONTAINER_IMPOSSIBLE_TITLES` constant. The last 4 were added alongside
+checks-backlog.md's "Grupo C -- systemd real" (6 checks total) -- the other
+2, "Ensure chrony is running as user _chrony" and "Ensure systemd-timesyncd
+is enabled and running", pass vacuously here instead (no chronyd process
+at all; systemd-timesyncd never installed, chrony is this image's chosen
+single time-sync daemon) rather than failing, since CIS's own audit text
+gates all 6 of these titles on "- IF - the daemon is in use" -- a
+genuinely-absent daemon is a legitimate PASS, not a gap. These 6 checks
+were validated for real not against a new container, but directly against
+the production VPS itself (real systemd PID 1, `cron`/`systemd-timesyncd`
+both genuinely enabled+active there) and against `invariant-api` (a real
+Debian 13 production container with no systemd at all, a good "command
+doesn't exist" robustness case) -- see checks-backlog.md's own note on this
+for why (kept to the infra already in place, no new container built, no
+new transport added to `facts.py` -- `collect_facts()` is still `docker
+exec`-only, same as ever).
+
+Group B's two additions (checks-backlog.md) both pass on both hardened
+images: "Ensure systemd-journal-remote service is not in use" vacuously
+(see the comment above `facts.journal_remote_status_text` in `facts.py`),
+and "Ensure systemd-timesyncd configured with authorized timeserver" via a
+hand-written `/etc/systemd/timesyncd.conf` (same "config-only demo" pattern
+already used for pwquality.conf/pwhistory.conf -- see the hardened
+Dockerfiles' own comment above that block).
+
+One more real (not structural) FAIL also stays on both hardened images:
+"Ensure separate partition exists for /var" -- Group C's partition family
+(26 candidates, checks-backlog.md; see `infra/docker-compose.yml`'s comment
+above its 6 services and `infra/docker-compose.demo.yml`'s comment above
+its own 6). `/tmp`, `/home`, `/var/tmp`, `/var/log`, `/var/log/audit` are
+all tmpfs-mounted (`/dev/shm` already is, by Docker's own default); `/var`
+itself deliberately isn't, since tmpfs-mounting it would blank
+`/var/lib/dpkg` and `/var/cache/apt`, breaking every package-presence check
+on every restart. Not added to `CONTAINER_IMPOSSIBLE_TITLES` -- it's not
+container-impossible, it's a deliberate infra tradeoff, same "real,
+closeable, left open on purpose" posture as the timesyncd gap used to be
+before it was closed above.
 
 ### Container detection: the "environmental" excuse is conditional, not automatic
 

@@ -34,29 +34,52 @@ services:
   # access (see invariant.assessment). One clean baseline + one SSH
   # misconfig + one permissions misconfig, per distro family, so the demo
   # shows the same class of finding across two distros.
+  # `tmpfs:` on all 6 (checks-backlog.md Group C's partition family):
+  # /dev/shm is already its own tmpfs by Docker's own default (confirmed
+  # empirically, needs no entry here); these 5 are not, by default part of
+  # the single root overlay filesystem. Docker's own tmpfs default already
+  # includes nodev+nosuid+noexec on every mount regardless of options
+  # requested (confirmed empirically), and picks the conventional mode per
+  # well-known path (1777 for /tmp and /var/tmp, 755 for the rest) with no
+  # extra config needed. /var itself is deliberately NOT included: it holds
+  # /var/lib/dpkg (the package database facts.py's `installed_packages`
+  # collection reads live, every assess_target() call) and /var/cache/apt --
+  # tmpfs-mounting /var would blank both on every container start,
+  # cascading into a false-empty installed_packages set and breaking every
+  # package-presence check already passing (ufw/sudo/auditd/chrony/cron/
+  # avahi-absent/bluetooth-absent, ...), not just the new partition checks.
+  # Leaves "Ensure separate partition exists for /var" (the one check in
+  # this family that isn't the vacuous-pass conditional the option checks
+  # are) failing on all 6 -- see test_assess_target.py's _SYSTEMIC_GAPS.
   debian-baseline:
     build: ./docker/debian-baseline
     container_name: invariant-debian-baseline
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   debian-ssh-bad:
     build: ./docker/debian-ssh-bad
     container_name: invariant-debian-ssh-bad
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   debian-permissions-bad:
     build: ./docker/debian-permissions-bad
     container_name: invariant-debian-permissions-bad
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   ubuntu-baseline:
     build: ./docker/ubuntu-baseline
     container_name: invariant-ubuntu-baseline
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   ubuntu-ssh-bad:
     build: ./docker/ubuntu-ssh-bad
     container_name: invariant-ubuntu-ssh-bad
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   ubuntu-permissions-bad:
     build: ./docker/ubuntu-permissions-bad
     container_name: invariant-ubuntu-permissions-bad
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
 volumes:
   postgres_data:

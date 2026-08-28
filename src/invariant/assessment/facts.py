@@ -223,6 +223,97 @@ _TEXT_BLOCKS = [
         "stat -Lc 'mode=%a uid=%u gid=%g gname=%G path=%n' /sbin/auditctl /sbin/aureport "
         "/sbin/ausearch /sbin/auditd /sbin/augenrules /sbin/autrace 2>&1",
     ),
+    # "Ensure systemd-timesyncd configured with authorized timeserver"
+    # (checks-backlog.md Group B) -- confirmed via Postgres, full untruncated
+    # audit script compared across all 6 real documents: same underlying
+    # bash logic everywhere (debian_linux_11 uses an older associative-array
+    # style, the other 5 a refactored array style), only page numbers and
+    # array-bookkeeping cosmetics differ. The real audit reads the merged
+    # config via `systemd-analyze cat-config`, i.e. base file + conf.d, later
+    # file wins -- concatenating both here is the same established pattern
+    # as pwquality_text above (a missing conf.d dir just yields its own
+    # `cat` error text).
+    ("timesyncd_text", "===TIMESYNCD===", "cat /etc/systemd/timesyncd.conf /etc/systemd/timesyncd.conf.d/*.conf 2>&1"),
+    # "Ensure systemd-journal-remote service is not in use" (checks-backlog.md
+    # Group B) -- audit text is verbatim identical across all 6 real
+    # documents (confirmed via Postgres, only page-number/footer boilerplate
+    # differs): `systemctl is-enabled ...socket ...service | grep -P
+    # '^enabled'` then the same with `is-active`/`^active`, and "nothing
+    # should be returned" from either is the documented PASS condition.
+    # These containers don't run real systemd (PID 1 isn't systemd, same gap
+    # documented for Group C), so `systemctl` itself errors out here -- but
+    # that error is exactly "nothing matching ^enabled/^active", the literal
+    # letter of the audit's own PASS condition, not an approximation of it
+    # (contrast Group C's enabled+active checks, which need to prove a
+    # *positive* running state that a systemd-less container genuinely can't
+    # demonstrate). Same vacuous-PASS precedent as boot_grub_audit_text.
+    (
+        "journal_remote_status_text",
+        "===JOURNAL_REMOTE_STATUS===",
+        "systemctl is-enabled systemd-journal-remote.socket systemd-journal-remote.service 2>&1 | grep -P -- '^enabled'; "
+        "systemctl is-active systemd-journal-remote.socket systemd-journal-remote.service 2>&1 | grep -P -- '^active'",
+    ),
+    # checks-backlog.md "Grupo C -- systemd real" (6 candidates). Real audit
+    # commands, verbatim, confirmed via Postgres across all 6 target
+    # documents (identical text, only page/footer noise and external_id
+    # differ). Collected unconditionally on every target, same as every
+    # other field here -- a target with no real systemd just gets
+    # systemctl's own error text back ("System has not been booted with
+    # systemd as init system..."), which every evaluate() below reads as
+    # "not enabled/active" (for the 2 unconditional controls) or, combined
+    # with installed_packages, as a vacuous PASS for the 4 controls whose
+    # own real audit text is gated "- IF - X is in use on the system" --
+    # same substitution pattern _evaluate_single_time_sync_daemon already
+    # uses, and the same reasoning already applied to
+    # journal_remote_status_text above.
+    (
+        "systemd_service_status_text",
+        "===SYSTEMD_SERVICE_STATUS===",
+        "echo '--AUDITD_ENABLED--'; systemctl is-enabled auditd 2>&1; "
+        "echo '--AUDITD_ACTIVE--'; systemctl is-active auditd 2>&1; "
+        "echo '--CHRONY_ENABLED--'; systemctl is-enabled chrony.service 2>&1; "
+        "echo '--CHRONY_ACTIVE--'; systemctl is-active chrony.service 2>&1; "
+        "echo '--CRON_ENABLED--'; systemctl list-unit-files 2>&1 | awk '$1~/^crond?\\.service/{print $2}'; "
+        "echo '--CRON_ACTIVE--'; systemctl list-units 2>&1 | awk '$1~/^crond?\\.service/{print $3}'; "
+        "echo '--TIMESYNCD_ENABLED--'; systemctl is-enabled systemd-timesyncd.service 2>&1; "
+        "echo '--TIMESYNCD_ACTIVE--'; systemctl is-active systemd-timesyncd.service 2>&1",
+    ),
+    # "Ensure chrony is running as user _chrony" -- real audit is a live
+    # `ps -ef` grep, unconditional on package presence: a target with no
+    # chronyd process at all naturally produces no output either way, same
+    # vacuous-pass-by-absence precedent as boot_grub_audit_text.
+    (
+        "chrony_process_user_text",
+        "===CHRONY_PROCESS_USER===",
+        "ps -ef 2>&1 | awk '(/[c]hronyd/ && $1!=\"_chrony\") { print $1 }'",
+    ),
+    # "Ensure the running and on disk configuration is the same" -- real
+    # audit is `augenrules --check`, whose PASS text is exactly "No
+    # change". A target without augenrules installed gets a shell error
+    # here, read as FAIL -- fails closed, same posture Group I already
+    # established for every other auditd-absent check (a missing
+    # auditd.conf/log directory is an explicit FAIL branch in the real
+    # script, not a vacuous pass).
+    ("audit_rules_sync_text", "===AUDIT_RULES_SYNC===", "augenrules --check 2>&1"),
+    # checks-backlog.md Group C's 24 partition/mount-option candidates: one
+    # `findmnt -kn <target>` per candidate mount point, looped rather than
+    # passed as one multi-target invocation -- confirmed empirically that
+    # `findmnt -kn A B` exits 1 with zero output the moment even one of A/B
+    # isn't a real mount (not "print what resolves, skip the rest"), which
+    # would silently blank every target's line the first time any one of
+    # the 7 isn't mounted. Looped, each target's line (or absence) is
+    # independent. Real audit for both the "<option> set on X" and the
+    # "separate partition exists for X" families is this exact command
+    # (confirmed via Postgres across all 6 target documents) -- a target
+    # that isn't a real mount at all yields no line here, which is what the
+    # "<option> set" evaluators read as a vacuous PASS (CIS's own "- IF - a
+    # separate partition exists" conditional), not a failure.
+    (
+        "mounts_text",
+        "===MOUNTS===",
+        "for l_t in /dev/shm /home /tmp /var /var/log /var/log/audit /var/tmp; do "
+        "findmnt -kn \"$l_t\" -o TARGET,SOURCE,FSTYPE,OPTIONS 2>&1; done",
+    ),
     # Best-effort "is this target a container" signal for demo.sh's report
     # (scripts/demo/report.py) -- not read by any real Check, this tool has
     # no transport to a target other than `docker exec`, so there's no more
@@ -312,6 +403,12 @@ class SystemFacts:
     boot_grub_audit_text: str = ""
     interactive_user_files_text: str = ""
     audit_conf_text: str = ""
+    timesyncd_text: str = ""
+    journal_remote_status_text: str = ""
+    systemd_service_status_text: str = ""
+    chrony_process_user_text: str = ""
+    audit_rules_sync_text: str = ""
+    mounts_text: str = ""
     container_detection_text: str = ""
 
 
@@ -442,6 +539,12 @@ def _parse_collect_output(output: str) -> SystemFacts:
         boot_grub_audit_text=text_values["boot_grub_audit_text"],
         interactive_user_files_text=text_values["interactive_user_files_text"],
         audit_conf_text=text_values["audit_conf_text"],
+        timesyncd_text=text_values["timesyncd_text"],
+        journal_remote_status_text=text_values["journal_remote_status_text"],
+        systemd_service_status_text=text_values["systemd_service_status_text"],
+        chrony_process_user_text=text_values["chrony_process_user_text"],
+        audit_rules_sync_text=text_values["audit_rules_sync_text"],
+        mounts_text=text_values["mounts_text"],
         container_detection_text=text_values["container_detection_text"],
     )
 
