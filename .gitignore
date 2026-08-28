@@ -32,10 +32,10 @@ htmlcov/
 # and only under their CIS OS-family subdirectory (data/raw/cis/debian/,
 # data/raw/cis/ubuntu/) -- everything else under data/raw/ stays ignored.
 #
-# Exception: the sidecars quickdemo.sh's extract/import step and CI's test
+# Exception: the sidecars demo.sh's extract/import step and CI's test
 # suite actually need (debian_linux_11/12/13, ubuntu_linux_20_04/22_04/24_04
 # -- one per OS version the 6 fixed assessment test containers run, plus the
-# 2 quickdemo documents) ARE tracked, with a repo-root-relative `path` (not
+# 2 demo documents) ARE tracked, with a repo-root-relative `path` (not
 # absolute) -- extract.py has no fallback to derive this metadata from a
 # bare PDF, so without it `invariant extract` fails on a fresh clone (or in
 # CI) with no way to regenerate it short of a live CIS Workbench fetch.
@@ -64,7 +64,7 @@ data/raw/cis/ubuntu/*
 # Internal onboarding notes — not meant for the public repo.
 to-do.md
 
-# quickdemo.sh's per-run misconfig manifest -- regenerated every run (a
+# demo.sh's per-run misconfig manifest -- regenerated every run (a
 # fresh random draw each time), not meant to be committed. See
-# scripts/quickdemo/apply_misconfigs.py.
-data/quickdemo/
+# scripts/demo/apply_misconfigs.py.
+data/demo/
