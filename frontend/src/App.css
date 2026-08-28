@@ -438,6 +438,21 @@ button {
   color: var(--amber);
 }
 
+/* CIS's own severity tier (Level 1 = baseline, Level 2 = defense-in-depth,
+   may affect functionality) -- Level 1 gets the stronger, filled treatment
+   since it's the higher-priority tier; Level 2 stays quiet by comparison,
+   same "semantic color separate from the accent" split as pass/fail. */
+.badge--level1 {
+  background: var(--blue);
+  color: var(--bg);
+}
+
+.badge--level2 {
+  background: transparent;
+  color: var(--blue);
+  box-shadow: inset 0 0 0 1px var(--blue);
+}
+
 .card__breakdown {
   font-size: 0.85rem;
   color: var(--sub);
