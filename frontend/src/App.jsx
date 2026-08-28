@@ -327,15 +327,31 @@ function TargetGrid({ report, onViewFindings }) {
   )
 }
 
+// CIS's own severity/profile tier -- Level 1 (baseline) before Level 2
+// (defense-in-depth, may affect functionality) before "no applicability
+// data" -- see Finding.level's own docstring in assessment/__init__.py for
+// why it's the minimum across a control's applicability list, not a single
+// fixed value.
+function byLevel(findings) {
+  return [...findings].sort((a, b) => (a.level ?? 99) - (b.level ?? 99))
+}
+
+function LevelBadge({ level }) {
+  if (level == null) return null
+  return <span className={`badge badge--level${level}`}>L{level}</span>
+}
+
 function FindingListItem({ finding, onSelect }) {
   return (
     <li className="finding">
       <div className="finding__head">
         <span className="mono">{finding.external_id}</span>
+        <LevelBadge level={finding.level} />
         <span>{finding.control_title}</span>
       </div>
       <div className="finding__meta">
         {finding.source_name}/{finding.document_name} v{finding.document_version}
+        {finding.scored === false && ' · not scored'}
       </div>
       <div className="finding__evidence mono">{finding.evidence_output}</div>
       <button type="button" className="link-btn" onClick={() => onSelect(finding)}>
@@ -364,7 +380,7 @@ function TargetDetail({ name, data, onSelectFinding, onBack }) {
         <>
           <h4 className="finding-group finding-group--warning">Unexplained ({data.unexplained.length})</h4>
           <ul className="finding-list">
-            {data.unexplained.map((f) => (
+            {byLevel(data.unexplained).map((f) => (
               <FindingListItem key={f.external_id} finding={f} onSelect={onSelectFinding} />
             ))}
           </ul>
@@ -375,7 +391,7 @@ function TargetDetail({ name, data, onSelectFinding, onBack }) {
         <>
           <h4 className="finding-group">Misconfigurations ({data.story.length})</h4>
           <ul className="finding-list">
-            {data.story.map((f) => (
+            {byLevel(data.story).map((f) => (
               <FindingListItem key={f.external_id} finding={f} onSelect={onSelectFinding} />
             ))}
           </ul>
@@ -391,7 +407,7 @@ function TargetDetail({ name, data, onSelectFinding, onBack }) {
             </span>
           </summary>
           <ul className="finding-list">
-            {data.environmental.map((f) => (
+            {byLevel(data.environmental).map((f) => (
               <FindingListItem key={f.external_id} finding={f} onSelect={onSelectFinding} />
             ))}
           </ul>
@@ -403,7 +419,7 @@ function TargetDetail({ name, data, onSelectFinding, onBack }) {
 
 function RecentFindings({ report, onSelectFinding }) {
   if (!report) return null
-  const findings = report.targets.flatMap((name) => report.containers[name].story)
+  const findings = byLevel(report.targets.flatMap((name) => report.containers[name].story))
   if (findings.length === 0) {
     return (
       <section>
@@ -467,7 +483,9 @@ function FindingDetail({ finding, onBack }) {
         ← Back
       </button>
       <span className="finding-detail__eyebrow">FINDING</span>
-      <h2>{finding.control_title}</h2>
+      <h2>
+        {finding.control_title} <LevelBadge level={finding.level} />
+      </h2>
 
       <div className="finding-detail__grid">
         <div>
@@ -477,6 +495,13 @@ function FindingDetail({ finding, onBack }) {
         <div>
           <div className="finding-detail__label">Observed</div>
           <div className="mono">{finding.evidence_output}</div>
+        </div>
+        <div>
+          <div className="finding-detail__label">CIS profile</div>
+          <div>
+            {finding.level != null ? `Level ${finding.level}` : 'No applicability data'}
+            {finding.scored === false && ' · not scored'}
+          </div>
         </div>
       </div>
 

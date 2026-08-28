@@ -5087,6 +5087,19 @@ class Finding:
     raw_artifact_path: str = ""
     content_hash: str = ""
     document_retrieved_at: str = ""
+    # CIS's own severity/profile signal, already sitting unused in every
+    # control's normalized_data (PRD sec. 11/21/22's "severity model" gap --
+    # not invented here, just finally surfaced). `applicability` is a list
+    # of {level, applies_to} pairs (a control can legitimately be Level 1
+    # for "Server" and Level 2 for "Workstation" at once, confirmed via
+    # Postgres -- e.g. "Ensure usb-storage kernel module is not available")
+    # -- `level` below is the minimum across that list (the most permissive
+    # profile that still flags it), since invariant has no concept yet of
+    # "this target is a workstation vs a server" to pick one deterministically.
+    # None for the handful of test fixtures that construct a Finding
+    # without it, or if a control has no applicability data at all.
+    level: int | None = None
+    scored: bool | None = None
 
 
 def document_slug_for_os(os_id: str, version_id: str) -> str:
@@ -5096,6 +5109,15 @@ def document_slug_for_os(os_id: str, version_id: str) -> str:
     convention already used there.
     """
     return f"{os_id}_linux_{version_id.replace('.', '_')}"
+
+
+def _control_level(normalized_data: dict) -> int | None:
+    """Minimum `level` across a control's `applicability` list -- see
+    Finding.level's own docstring for why "minimum", not "first" or "max".
+    """
+    applicability = normalized_data.get("applicability") or []
+    levels = [a["level"] for a in applicability if a.get("level") is not None]
+    return min(levels) if levels else None
 
 
 def assess_target(target: str) -> list[Finding]:
@@ -5130,6 +5152,8 @@ def assess_target(target: str) -> list[Finding]:
                 remediation=control["normalized_data"].get("remediation", ""),
                 raw_artifact_path=control["raw_artifact_path"] or "",
                 content_hash=control["content_hash"] or "",
+                level=_control_level(control["normalized_data"]),
+                scored=control["normalized_data"].get("scored"),
                 document_retrieved_at=(
                     control["retrieved_at"].isoformat() if control["retrieved_at"] else ""
                 ),
